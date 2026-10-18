@@ -574,7 +574,6 @@
         <a href="#gradio" class="nav-btn">Software Gradio</a>
         <a href="#hardware" class="nav-btn">Hardware & GPU</a>
         <a href="#plan-tesis" class="nav-btn">Plan de Tesis</a>
-        <a href="#papers" class="nav-btn">Papers PDF</a>
       </nav>
     </div>
   </header>
@@ -590,13 +589,14 @@
         Una plataforma moderna en Python que sustituye software de hace 30 años, resuelve la física cuántica exacta en milisegundos y deduce la geometría molecular 3D sin asignación manual.
       </p>
       <p class="hero-author">
-        Propuesta de Tesis & Resultados · <strong>Miguel Díaz</strong> · Asesor: <strong>Dr. Leonardo Álvarez-Valtierra</strong>
+        Proyecto de Maestría & Resultados · <strong>Miguel Díaz</strong><br>
+        Dirección y Respaldo Científico: <strong>Dr. Leonardo Álvarez-Valtierra</strong> &amp; <strong>Dr. Alejandro Gil-Villegas (SNII Nivel III)</strong>
       </p>
       
       <div class="cta-group">
         <a href="#estudios" class="btn btn-primary">📊 Explorar Resultados & Benchmarks</a>
-        <a href="#gradio" class="btn btn-secondary">⚡ Propuesta Interfaz Gradio</a>
-        <a href="#papers" class="btn btn-secondary">📄 Descargar Artículos (PDF)</a>
+        <a href="#gradio" class="btn btn-secondary">⚡ Suite Interactiva SpecWatson (Gradio + GPU)</a>
+        <a href="#plan-tesis" class="btn btn-secondary">🗓️ Plan de Trabajo de Tesis</a>
       </div>
     </div>
   </section>
@@ -948,8 +948,8 @@ demo = gr.Interface(
     </div>
   </section>
 
-  <!-- Sección 6: Descargas de Artículos Científicos -->
-  <section id="papers">
+  <!-- Sección 6: Descargas de Artículos Científicos (Oculta temporalmente para presentación preliminar) -->
+  <section id="papers" style="display: none;">
     <div class="container">
       <div class="section-tag">06 · Publicaciones Listas para Descarga</div>
       <h2 class="section-title">Artículos de Nivel Internacional Generados</h2>
@@ -988,7 +988,7 @@ demo = gr.Interface(
   <!-- Sección 7: Evaluación de Hardware (Google Colab Free vs Pro / GPU) -->
   <section id="hardware">
     <div class="container">
-      <div class="section-tag">07 · Infraestructura & Cómputo</div>
+      <div class="section-tag">06 · Infraestructura & Cómputo</div>
       <h2 class="section-title">Análisis de Hardware: GPU Gratuita vs. Google AI / Colab Pro</h2>
       <p class="section-desc">
         ¿Qué tanto impacta contar con GPUs de gama alta (NVIDIA A100/L4) frente al nivel gratuito (T4) en las diferentes etapas de la investigación?
@@ -1042,7 +1042,7 @@ demo = gr.Interface(
       <div class="callout" style="background: rgba(16, 185, 129, 0.08); border-left-color: var(--success);">
         <div class="callout-title" style="color: var(--success);">Veredicto Estratégico para la Tesis:</div>
         <p>
-          Para la fase actual de presentación y pruebas preliminares, <strong>el nivel gratuito de Google Colab o tu CPU local es 100% suficiente</strong>. Cuando comencemos el ajuste masivo con datos reales de laboratorio y el acoplamiento de rotores internos periódicos de grupos metilo (\(V_3\)), convendrá activar el plan Pro mensual o solicitar apoyo mediante los proyectos de investigación del laboratorio (CONAHCYT / PRODEP / UGTO).
+          Para la fase actual de presentación y pruebas preliminares, <strong>el nivel gratuito de Google Colab o tu CPU local es 100% suficiente</strong>. Cuando comencemos el ajuste masivo con datos reales de laboratorio y el acoplamiento de rotores internos periódicos de grupos metilo (\(V_3\)), el entorno con GPUs NVIDIA L4/A100 de Colab Pro permite reducir semanas de cálculo tradicional a minutos.
         </p>
       </div>
     </div>
@@ -1051,10 +1051,10 @@ demo = gr.Interface(
   <!-- Sección 8: Plan de Trabajo de Titulación -->
   <section id="plan-tesis">
     <div class="container">
-      <div class="section-tag">08 · Cronograma & Próximos Pasos</div>
-      <h2 class="section-title">Plan de Trabajo de Titulación (2026 – 2028)</h2>
+      <div class="section-tag">07 · Cronograma & Próximos Pasos</div>
+      <h2 class="section-title">Plan de Trabajo de Tesis de Maestría (2026 – 2028)</h2>
       <p class="section-desc">
-        Hoja de ruta estructurada a dos años para consolidar la suite SpecWatson, validar con datos experimentales del laboratorio y culminar en el grado académico con publicaciones científicas.
+        Hoja de ruta estructurada para consolidar la suite SpecWatson, validar con datos experimentales del laboratorio y culminar en el grado académico con publicaciones científicas arbitradas.
       </p>
 
       <div class="timeline">
@@ -1064,12 +1064,12 @@ demo = gr.Interface(
             <span class="timeline-badge badge-completed">✓ Etapa 0 · Completada con Éxito</span>
             <span class="timeline-period">Octubre 2026</span>
           </div>
-          <h3>Fundamentos Cuánticos, Benchmarking y Prototipo Inicial</h3>
+          <h3>Fundamentos Cuánticos, Benchmarking y Suite Interactiva en la Nube</h3>
           <ul>
             <li>Desarrollo del motor cuántico de rotor asimétrico con distorsión cuártica de Watson en Python.</li>
             <li>Implementación de la factorización simetrizada de Wang (\(D_2\)): verificación de identidad cuántica absoluta (\(< 10^{-9}\) MHz) y aceleración empírica \(4.4\times\).</li>
-            <li>Benchmarks del Carbazol (reproduciendo JCP 2006) y polifenol <em>trans</em>-Resveratrol (congestión >2,400 líneas y discriminación \(r=98.8\%\) vs \(r<30\%\)).</li>
-            <li>Redacción y compilación de 2 artículos científicos (español e inglés) en formato JCP/PCCP y creación de prototipo Gradio.</li>
+            <li>Benchmarks del Carbazol (reproduciendo JCP 2006), polifenol <em>trans</em>-Resveratrol y moléculas estándar de referencia (HITRAN / JPL: \(\text{H}_2\text{O}, \text{CO}_2, \text{SO}_2, \text{H}_2\text{CO}\)).</li>
+            <li>Despliegue de la suite interactiva de 3 pestañas en Gradio + Google Colab GPU con constructor molecular 3D y diagonalización del tensor de inercia.</li>
           </ul>
         </div>
 
@@ -1110,7 +1110,7 @@ demo = gr.Interface(
           </div>
           <h3>Sometimiento de Artículos Arbitrados & Congresos Internacionales</h3>
           <ul>
-            <li>Sometimiento del primer artículo de investigación formal a revista internacional indexada de alto impacto (<em>The Journal of Chemical Physics</em> o <em>PCCP</em>).</li>
+            <li>Sometimiento de los artículos de investigación a revistas internacionales indexadas de alto impacto (<em>The Journal of Chemical Physics</em> / <em>PCCP</em>).</li>
             <li>Presentación de resultados en congresos científicos nacionales (Congreso Nacional de Física) e internacionales (International Symposium on Molecular Spectroscopy).</li>
             <li>Extensión a análisis de mezclas conformacionales complejas y cuantificación de poblaciones relativas.</li>
           </ul>
@@ -1122,9 +1122,9 @@ demo = gr.Interface(
             <span class="timeline-badge badge-upcoming" style="color: #c084fc; border-color: rgba(192, 132, 252, 0.35);">Etapa 4 · Semestre 4</span>
             <span class="timeline-period">Julio 2028 – Octubre 2028</span>
           </div>
-          <h3>Escritura de Tesis, Liberación de Software & Titulación</h3>
+          <h3>Escritura de Tesis, Liberación de Software & Titulación de Maestría</h3>
           <ul>
-            <li>Redacción formal del documento de tesis de titulación para la Universidad de Guanajuato.</li>
+            <li>Redacción formal del documento de tesis de maestría para la Universidad de Guanajuato.</li>
             <li>Liberación oficial del paquete en PyPI (<code>pip install specwatson</code>) con documentación interactiva y ejecutable para Windows.</li>
             <li>Defensa de tesis de grado ante el sínodo del comité tutorial.</li>
           </ul>
@@ -1137,10 +1137,13 @@ demo = gr.Interface(
   <footer>
     <div class="container">
       <p style="margin-bottom: 8px; color: var(--text-main); font-weight: 600;">
-        Laboratorio de Espectroscopía Molecular · Universidad de Guanajuato
+        División de Ciencias e Ingenierías (Campus León) · Universidad de Guanajuato
       </p>
-      <p style="font-size: 0.82rem;">
-        Desarrollado para el proyecto de tesis de <strong>Miguel Díaz</strong> bajo la dirección del <strong>Dr. Leonardo Álvarez-Valtierra</strong>.
+      <p style="font-size: 0.84rem; color: var(--text-muted);">
+        Desarrollado para el proyecto de tesis de maestría de <strong>Miguel Díaz</strong> bajo la dirección del <strong>Dr. Leonardo Álvarez-Valtierra</strong>.
+      </p>
+      <p style="font-size: 0.82rem; color: var(--accent); margin-top: 6px;">
+        Agradecimientos: Apoyo financiero a través del Programa de Ayudantía de Investigación del Sistema Nacional de Investigadoras e Investigadores (<strong>SNII Nivel III</strong>) bajo la dirección del <strong>Dr. Alejandro Gil-Villegas</strong>.
       </p>
       <p style="margin-top: 16px; font-size: 0.78rem;">
         Código abierto bajo licencia MIT · Repositorio GitHub: <a href="https://github.com/mgueldiaz10-oss/specwatson" target="_blank">mgueldiaz10-oss/specwatson</a>
