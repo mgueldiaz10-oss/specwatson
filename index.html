@@ -470,6 +470,69 @@
       font-family: inherit;
     }
 
+    /* Timeline & Plan de Tesis */
+    .timeline {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin: 24px 0;
+    }
+    .timeline-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 14px;
+      padding: clamp(16px, 3.5vw, 24px);
+      transition: all 0.2s ease;
+    }
+    .timeline-item:hover {
+      border-color: var(--primary);
+      transform: translateY(-2px);
+    }
+    .timeline-header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .timeline-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-completed {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.35);
+    }
+    .badge-upcoming {
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--primary);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+    }
+    .timeline-period {
+      font-size: 0.8rem;
+      color: var(--accent);
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    .timeline-item h3 {
+      font-size: 1.15rem;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+    .timeline-item ul {
+      padding-left: 20px;
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
     /* Footer */
     footer {
       background: #070a14;
@@ -509,6 +572,8 @@
         <a href="#estudios" class="nav-btn">Resultados</a>
         <a href="#optimizacion" class="nav-btn">Algoritmo</a>
         <a href="#gradio" class="nav-btn">Software Gradio</a>
+        <a href="#hardware" class="nav-btn">Hardware & GPU</a>
+        <a href="#plan-tesis" class="nav-btn">Plan de Tesis</a>
         <a href="#papers" class="nav-btn">Papers PDF</a>
       </nav>
     </div>
@@ -915,6 +980,154 @@ demo = gr.Interface(
             <a href="papers/articulo_resveratrol_es.pdf" target="_blank" class="btn btn-primary" style="flex: 1; min-height: 42px; font-size: 0.85rem; background: linear-gradient(135deg, #d97706, #b45309);">Descargar PDF (Español)</a>
             <a href="papers/articulo_resveratrol_en.pdf" target="_blank" class="btn btn-secondary" style="flex: 1; min-height: 42px; font-size: 0.85rem;">PDF (Inglés)</a>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sección 7: Evaluación de Hardware (Google Colab Free vs Pro / GPU) -->
+  <section id="hardware">
+    <div class="container">
+      <div class="section-tag">07 · Infraestructura & Cómputo</div>
+      <h2 class="section-title">Análisis de Hardware: GPU Gratuita vs. Google AI / Colab Pro</h2>
+      <p class="section-desc">
+        ¿Qué tanto impacta contar con GPUs de gama alta (NVIDIA A100/L4) frente al nivel gratuito (T4) en las diferentes etapas de la investigación?
+      </p>
+
+      <div class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Escenario de la Tesis</th>
+              <th>GPU Gratuita (NVIDIA T4)</th>
+              <th>GPU Pro (NVIDIA A100 / L4)</th>
+              <th>¿Vale la pena la inversión?</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Simulación de Rotor Rígido</strong><br><small style="color:var(--text-dim);">Carbazol, fluoreno, resveratrol básico</small></td>
+              <td>~0.5 segundos</td>
+              <td>~0.08 segundos</td>
+              <td><span class="timeline-badge" style="background:rgba(100,116,139,0.2); color:#94a3b8;">No necesario</span><br><small>CPU o T4 bastan</small></td>
+            </tr>
+            <tr>
+              <td><strong>Ajuste Genético de Banda Densa</strong><br><small style="color:var(--text-dim);">50 candidatos × 100 generaciones</small></td>
+              <td>~3 a 5 minutos</td>
+              <td>~30 a 50 segundos</td>
+              <td><span class="timeline-badge" style="background:rgba(245,158,11,0.2); color:var(--accent);">Recomendable</span><br><small>Ahorra horas en barridos</small></td>
+            </tr>
+            <tr>
+              <td><strong>Rotación Interna de Metilo (-CH₃)</strong><br><small style="color:var(--text-dim);">Matrices tensoriales 1000 × 1000 (4-metilanisol)</small></td>
+              <td>~25 a 45 min / corrida</td>
+              <td><strong>~1 a 2 minutos</strong></td>
+              <td><span class="timeline-badge badge-completed">CRUCIAL</span><br><small>Aceleración masiva HBM2</small></td>
+            </tr>
+            <tr>
+              <td><strong>Cómputo en Segundo Plano</strong><br><small style="color:var(--text-dim);">Cerrar laptop o pantalla de celular Android</small></td>
+              <td>❌ Se corta a los 15-20 min</td>
+              <td>✅ <strong>Sigue corriendo hasta 24h</strong></td>
+              <td><span class="timeline-badge badge-completed">VITAL</span><br><small>Ajustes nocturnos autónomos</small></td>
+            </tr>
+            <tr>
+              <td><strong>Estabilidad de Interfaz Gradio</strong><br><small style="color:var(--text-dim);">Link público compartido con el Dr. Leonardo</small></td>
+              <td>Se desconecta por inactividad</td>
+              <td>Sesión estable continua</td>
+              <td><span class="timeline-badge badge-upcoming">Ideal para demos</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout" style="background: rgba(16, 185, 129, 0.08); border-left-color: var(--success);">
+        <div class="callout-title" style="color: var(--success);">Veredicto Estratégico para la Tesis:</div>
+        <p>
+          Para la fase actual de presentación y pruebas preliminares, <strong>el nivel gratuito de Google Colab o tu CPU local es 100% suficiente</strong>. Cuando comencemos el ajuste masivo con datos reales de laboratorio y el acoplamiento de rotores internos periódicos de grupos metilo (\(V_3\)), convendrá activar el plan Pro mensual o solicitar apoyo mediante los proyectos de investigación del laboratorio (CONAHCYT / PRODEP / UGTO).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sección 8: Plan de Trabajo de Titulación -->
+  <section id="plan-tesis">
+    <div class="container">
+      <div class="section-tag">08 · Cronograma & Próximos Pasos</div>
+      <h2 class="section-title">Plan de Trabajo de Titulación (2026 – 2028)</h2>
+      <p class="section-desc">
+        Hoja de ruta estructurada a dos años para consolidar la suite SpecWatson, validar con datos experimentales del laboratorio y culminar en el grado académico con publicaciones científicas.
+      </p>
+
+      <div class="timeline">
+        <!-- Etapa 0 -->
+        <div class="timeline-item" style="border-left: 4px solid var(--success);">
+          <div class="timeline-header">
+            <span class="timeline-badge badge-completed">✓ Etapa 0 · Completada con Éxito</span>
+            <span class="timeline-period">Octubre 2026</span>
+          </div>
+          <h3>Fundamentos Cuánticos, Benchmarking y Prototipo Inicial</h3>
+          <ul>
+            <li>Desarrollo del motor cuántico de rotor asimétrico con distorsión cuártica de Watson en Python.</li>
+            <li>Implementación de la factorización simetrizada de Wang (\(D_2\)): verificación de identidad cuántica absoluta (\(< 10^{-9}\) MHz) y aceleración empírica \(4.4\times\).</li>
+            <li>Benchmarks del Carbazol (reproduciendo JCP 2006) y polifenol <em>trans</em>-Resveratrol (congestión >2,400 líneas y discriminación \(r=98.8\%\) vs \(r<30\%\)).</li>
+            <li>Redacción y compilación de 2 artículos científicos (español e inglés) en formato JCP/PCCP y creación de prototipo Gradio.</li>
+          </ul>
+        </div>
+
+        <!-- Etapa 1 -->
+        <div class="timeline-item" style="border-left: 4px solid var(--primary);">
+          <div class="timeline-header">
+            <span class="timeline-badge badge-upcoming">Etapa 1 · Semestre 1</span>
+            <span class="timeline-period">Noviembre 2026 – Mayo 2027</span>
+          </div>
+          <h3>Integración de Datos Experimentales Reales del Laboratorio</h3>
+          <ul>
+            <li>Conexión de los módulos de lectura de datos crudos (<code>.dat</code>, <code>.csv</code>, <code>.txt</code>) procedentes del osciloscopio y sistema de adquisición del laboratorio de jet supersónico del Dr. Leonardo.</li>
+            <li>Calibración de la función de aparato instrumental del láser colorante Matisse DS / SHG y sustracción automática de línea base.</li>
+            <li>Ajuste automático de bandas reales de moléculas investigadas en la División de Ciencias e Ingenierías (fluoreno, carbazol, dibenzofurano).</li>
+            <li>Despliegue de la interfaz web Gradio para uso interno de los alumnos del laboratorio en Google Colab.</li>
+          </ul>
+        </div>
+
+        <!-- Etapa 2 -->
+        <div class="timeline-item" style="border-left: 4px solid var(--secondary);">
+          <div class="timeline-header">
+            <span class="timeline-badge badge-upcoming">Etapa 2 · Semestre 2</span>
+            <span class="timeline-period">Junio 2027 – Diciembre 2027</span>
+          </div>
+          <h3>Módulo de Rotación Interna de Grupos Metilo (\(V_3\)) Acelerado en GPU</h3>
+          <ul>
+            <li>Formulación del Hamiltoniano con acoplamiento torsional periódico (Método del Eje Principal - PAM) para rotores internos de grupos metilo (\(-\text{CH}_3\)).</li>
+            <li>Implementación de tensores en PyTorch para diagonalización masiva de matrices \(1000 \times 1000\) en GPU.</li>
+            <li>Deducción automática de la altura de la barrera torsional \(V_3\) en moléculas clave del laboratorio como el 4-metilanisol y derivados de tolueno.</li>
+          </ul>
+        </div>
+
+        <!-- Etapa 3 -->
+        <div class="timeline-item" style="border-left: 4px solid var(--accent);">
+          <div class="timeline-header">
+            <span class="timeline-badge badge-upcoming">Etapa 3 · Semestre 3</span>
+            <span class="timeline-period">Enero 2028 – Junio 2028</span>
+          </div>
+          <h3>Sometimiento de Artículos Arbitrados & Congresos Internacionales</h3>
+          <ul>
+            <li>Sometimiento del primer artículo de investigación formal a revista internacional indexada de alto impacto (<em>The Journal of Chemical Physics</em> o <em>PCCP</em>).</li>
+            <li>Presentación de resultados en congresos científicos nacionales (Congreso Nacional de Física) e internacionales (International Symposium on Molecular Spectroscopy).</li>
+            <li>Extensión a análisis de mezclas conformacionales complejas y cuantificación de poblaciones relativas.</li>
+          </ul>
+        </div>
+
+        <!-- Etapa 4 -->
+        <div class="timeline-item" style="border-left: 4px solid #a855f7;">
+          <div class="timeline-header">
+            <span class="timeline-badge badge-upcoming" style="color: #c084fc; border-color: rgba(192, 132, 252, 0.35);">Etapa 4 · Semestre 4</span>
+            <span class="timeline-period">Julio 2028 – Octubre 2028</span>
+          </div>
+          <h3>Escritura de Tesis, Liberación de Software & Titulación</h3>
+          <ul>
+            <li>Redacción formal del documento de tesis de titulación para la Universidad de Guanajuato.</li>
+            <li>Liberación oficial del paquete en PyPI (<code>pip install specwatson</code>) con documentación interactiva y ejecutable para Windows.</li>
+            <li>Defensa de tesis de grado ante el sínodo del comité tutorial.</li>
+          </ul>
         </div>
       </div>
     </div>
