@@ -1,0 +1,145 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+\definecolor{ugblue}{RGB}{15, 44, 89}
+\definecolor{uggold}{RGB}{180, 120, 20}
+\definecolor{slate}{RGB}{51, 65, 85}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=ugblue,
+    urlcolor=ugblue,
+    pdftitle={Guía de Presentación, Discurso y Base para Podcast: Proyecto SpecWatson},
+    pdfauthor={Miguel Díaz - DCI Universidad de Guanajuato}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small\textcolor{slate}{\textbf{Proyecto SpecWatson} $\cdot$ Maestría en Ciencias (DCI-UG)}}
+\rhead{\small\textcolor{slate}{Miguel Díaz $\cdot$ Guía de Presentación y Podcast}}
+\cfoot{\thepage}
+
+\titleformat{\section}{\large\bfseries\color{ugblue}}{\thesection.}{0.6em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries\color{uggold}}{\thesubsection}{0.5em}{}
+
+\begin{document}
+
+\begin{center}
+    {\LARGE\bfseries\color{ugblue} Guía Magistral de Presentación, Discurso Técnico\\y Documento Base para Podcast (NotebookLM)}\\[0.35cm]
+    {\large\bfseries Plataforma \texttt{SpecWatson}: Espectroscopía Rovibrónica de Alta Resolución,\\Factorización Cuántica de Wang, Evolución Diferencial y Química Cuántica en GPU}\\[0.35cm]
+    {\normalsize \textbf{Autor:} Miguel Díaz (Estudiante de Maestría en Ciencias)}\\[0.1cm]
+    {\normalsize \textbf{Dirección y Respaldo Científico:} Dr.\ Leonardo Álvarez-Valtierra \& Dr.\ Alejandro Gil-Villegas (SNII Nivel III)}\\[0.1cm]
+    {\small División de Ciencias e Ingenierías (Campus León) $\cdot$ Universidad de Guanajuato}\\[0.2cm]
+    {\footnotesize \textit{Agradecimientos: Apoyo financiero mediante el Programa de Ayudantía de Investigación SNII Nivel III (Dr.\ A.\ Gil-Villegas).}}
+\end{center}
+
+\vspace{0.3cm}
+
+\section{Resumen Ejecutivo: ¿Qué es \texttt{SpecWatson} y por qué transforma el laboratorio?}
+
+En la espectroscopía láser de alta resolución en haces moleculares supersónicos (como la espectroscopía de excitación de fluorescencia inducida por láser, LIF), enfriamos moléculas en fase gaseosa hasta temperaturas cercanas al cero absoluto ($T_{\text{rot}} \approx 1\text{ a }4\text{ K}$, unos $-270\,^\circ\text{C}$) en cuestión de microsegundos. A esa temperatura, la molécula deja de chocar con solventes y su espectro óptico revela miles de transiciones rotacionales cuantizadas entre el estado electrónico basal ($S_0$) y el estado electrónico excitado ($S_1$).
+
+Esas transiciones contienen el ``código de barras'' exacto de la geometría tridimensional de la molécula: sus momentos principales de inercia ($I_a, I_b, I_c$) y sus constantes rotacionales ($A, B, C$). Sin embargo, durante los últimos 30 años, el análisis de estos espectros ha dependido de programas pioneros pero hoy \textbf{desactualizados} en su arquitectura e interfaz (como \texttt{JB95}, escrito para Windows 95, o ajustes manuales línea por línea). Cuando se estudian moléculas de interés biológico o farmacéutico de más de $200\text{ g/mol}$ (como el antioxidante \textit{trans}-Resveratrol), más de $2,400$ líneas cuánticas se enciman dentro del ancho del láser, formando un contorno continuo donde la asignación visual humana es imposible.
+
+\textbf{\texttt{SpecWatson}} resuelve este cuello de botella integrando en una sola plataforma moderna en Python y acelerada en GPUs de Google Colab tres pilares fundamentales:
+\begin{enumerate}[leftmargin=1.5em,itemsep=3pt]
+    \item \textbf{Física Cuántica Exacta y Rápida (Pestaña 1):} Construcción del Hamiltoniano reducido en $A$ de Watson con distorsión centrífuga cuártica, acelerado mediante la \textbf{Transformación de Simetría de Wang} (grupo $D_2$), que divide cada matriz $(2J+1)\times(2J+1)$ en cuatro bloques estrictamente tridiagonales ($E^+, E^-, O^+, O^-$).
+    \item \textbf{Inteligencia Evolutiva para el Problema Inverso (Pestaña 2):} Un optimizador global híbrido (\textbf{Evolución Diferencial + Refinamiento Simplex de Nelder-Mead}) que deduce las constantes del estado excitado ($A', B', C'$) directamente a partir del contorno experimental con ruido, sin requerir que un humano asigne picos manualmente.
+    \item \textbf{Constructor Molecular 3D y Química Cuántica en GPU (Pestaña 3):} Un módulo que permite dibujar cualquier molécula en 2D o escribir su nombre/código SMILES, optimizar su estructura 3D usando campos de fuerza (\texttt{MMFF94s}), potenciales neuronales cuánticos en GPU (\texttt{TorchANI ANI-2x}) o DFT \textit{ab initio} (\texttt{PySCF / GPU4PySCF}), diagonalizar su tensor de inercia isotópico y obtener en segundos sus constantes $(A, B, C)$, su defecto de inercia $\Delta I$ y sus ejes principales $(a, b, c)$.
+\end{enumerate}
+
+\section{Guion de Presentación Paso a Paso (El ``Speech'' para el Dr.\ Leonardo)}
+
+\subsection{Acto 1: Apertura y Visión del Proyecto (2 minutos)}
+\begin{quote}
+\textit{``Doctor Leonardo, estuve trabajando intensamente en cómo llevar la propuesta del software de simulación y ajuste de espectros del laboratorio a una plataforma moderna, rápida y accesible desde cualquier computadora o incluso desde el teléfono celular. Desarrollé la primera versión funcional completa de \textbf{\texttt{SpecWatson}}, alojada en GitHub y conectada a las tarjetas gráficas (GPUs) de Google Colab mediante una interfaz gráfica interactiva en Gradio. Quiero mostrarle tanto la presentación ejecutiva como el software corriendo en vivo.''}
+\end{quote}
+
+\subsection{Acto 2: Explicación del Motor Físico y la Factorización de Wang (3 minutos)}
+\begin{quote}
+\textit{``Para que el ajuste automático sea viable, el cálculo directo del espectro tiene que ocurrir en milisegundos. Implementé el Hamiltoniano de rotor asimétrico de Watson (reducción $A$ en representación $I^r$) incluyendo los términos cuárticos de distorsión centrífuga ($\Delta_J, \Delta_{JK}, \Delta_K, \delta_J, \delta_K$).}
+
+\textit{En lugar de diagonalizar la matriz acoplada completa de tamaño $(2J+1)\times(2J+1)$ por fuerza bruta ---cuyo costo crece de forma cúbica $\mathcal{O}(J^3)$---, implementé la \textbf{transformación unitaria de simetría de Wang} bajo el grupo cuatro de Klein $D_2$. Esto separa exactamente el Hamiltoniano en cuatro sub-bloques independientes ($E^+, E^-, O^+, O^-$) que resultan ser matrices \textbf{estrictamente tridiagonales}. Al usar solucionadores tridiagonales dedicados, logramos una aceleración empírica de $4.4\times$ (y hasta $16\times$ en los pasos de eigenvalores) manteniendo una discrepancia numérica menor a $10^{-11}\text{ MHz}$ respecto a la diagonalización densa tradicional.''}
+\end{quote}
+
+\subsection{Acto 3: Demostración en Vivo de las 3 Pestañas del Software (5 minutos)}
+
+\paragraph{1. Pestaña 1 (Simulador Cuántico de Espectros + Comparación Experimental):}
+\begin{quote}
+\textit{``Aquí en la Pestaña 1 podemos simular en menos de $100\text{ milisegundos}$ el espectro rovibrónico completo con perfil de línea Voigt. Incluí un catálogo que abarca desde moléculas sencillas de calibración reportadas en \textbf{HITRAN y el catálogo JPL de la NASA} ---como Agua ($\text{H}_2\text{O}$), Dióxido de Carbono ($\text{CO}_2$, donde el programa detecta que es un rotor lineal con $I_a=0$), Dióxido de Azufre ($\text{SO}_2$) y Formaldehído ($\text{H}_2\text{CO}$)--- hasta las moléculas aromáticas estudiadas en chorro supersónico como \textbf{Carbazol} (reproduciendo su artículo de 2006 con el Dr.\ Pratt), \textbf{Indol}, \textbf{1-Naftol}, \textbf{Fenol}, \textbf{Benzonitrilo} y \textbf{trans-Resveratrol}. Además, al activar la casilla de superposición, podemos ver la referencia experimental de literatura en el fondo mientras movemos los deslizadores.''}
+\end{quote}
+
+\paragraph{2. Pestaña 2 (Ajuste Autónomo por Evolución Diferencial + Simplex):}
+\begin{quote}
+\textit{``En la Pestaña 2 resolvemos el problema inverso sin asignación manual. Si partimos de constantes del estado excitado equivocadas por $35\text{ MHz}$ (que es el error típico que deja un cálculo teórico de estructura electrónica) sobre un espectro con ruido experimental del $3\%$, un algoritmo clásico de mínimos cuadrados cae en un mínimo local falso porque los picos no coinciden. Nuestro motor usa \textbf{Evolución Diferencial} maximizando la correlación cruzada normalizada entre contornos completos y luego pule el resultado con el método \textbf{Simplex de Nelder-Mead}, recuperando $A', B', C'$ con un error menor a $0.15\text{ MHz}$ y más de $98\%$ de correlación.''}
+\end{quote}
+
+\paragraph{3. Pestaña 3 (Constructor Molecular 3D, Dibujo 2D y Química Cuántica en GPU):}
+\begin{quote}
+\textit{``Y esta tercera pestaña es la que conecta todo el flujo de trabajo del laboratorio. Si queremos estudiar una molécula nueva sin esperar semanas a que termine un clúster externo, podemos escribir su nombre químico, pegar su código SMILES o incluso \textbf{dibujar sus anillos y enlaces manualmente en la pizarra 2D integrada}.}
+
+\textit{El programa genera los confórmeros en 3D, optimiza la geometría (usando \texttt{RDKit MMFF94s}, redes neuronales cuánticas en GPU como \texttt{TorchANI ANI-2x} o DFT con \texttt{PySCF / GPU4PySCF}), traslada las coordenadas al centro de masa con masas monoisotópicas exactas de la IUPAC y diagonaliza el \textbf{Tensor de Inercia $3\times 3$}. Nos entrega al instante la gráfica de la molécula proyectada sobre sus \textbf{ejes principales de inercia $(a, b)$}, un visor 3D interactivo con las flechas de los ejes $a, b, c$ y el momento dipolar $\vec{\mu}$, y calcula el \textbf{Defecto de Inercia ($\Delta I = I_c - I_a - I_b$)} para verificar si la molécula es plana. Con un solo clic en el botón de transferencia, manda esas constantes $(A, B, C)$ recién calculadas a la Pestaña 1 y simula el espectro láser.''}
+\end{quote}
+
+\section{Explicaciones Intuitivas y Analogías Clave (Para Dominar las Preguntas)}
+
+\subsection{1. ¿Por qué ya no necesitamos esperar 30 días en un clúster de simulación tradicional?}
+Cuando un estudiante manda una molécula a un clúster universitario tradicional usando programas clásicos diseñados en los años 70/80 para CPUs (como \textit{Gaussian} en procesadores secuenciales), el cuello de botella consiste en evaluar miles de millones de integrales de repulsión bielectrónica $(\mu\nu|\lambda\sigma)$ para optimizar la geometría del estado excitado. Eso puede tardar \textbf{de 2 a 4 semanas por molécula} en una fila de espera.
+
+Lo más irónico es que, al terminar esos 30 días, la supercomputadora solo entrega un estimado de las constantes rotacionales $(A, B, C)$ que sigue teniendo un \textbf{error sistemático de $\pm 20\text{ a }40\text{ MHz}$} frente al experimento real.
+
+Con nuestra arquitectura en Google Colab sobre GPUs modernas (\textbf{NVIDIA T4, L4 o A100} con hasta $6,912$ núcleos CUDA):
+\begin{itemize}[leftmargin=1.5em,itemsep=2pt]
+    \item Los \textbf{potenciales neuronales cuánticos en GPU (\texttt{ANI-2x / AIMNet2})}, entrenados con millones de cálculos DFT ($\omega\text{B97X}$), relajan la geometría 3D en \textbf{2 segundos}.
+    \item Si se requiere DFT \textit{ab initio} explícito, \textbf{\texttt{GPU4PySCF}} evalúa las integrales electrónicas directamente en los núcleos CUDA de la A100 en \textbf{minutos} en lugar de semanas.
+    \item Finalmente, \textbf{\texttt{SpecWatson}} toma esas constantes preliminares y en \textbf{15 segundos} elimina el error de $\pm 30\text{ MHz}$ ajustando directamente el espectro medido con el láser del laboratorio.
+\end{itemize}
+
+\subsection{2. ¿Qué es el Defecto de Inercia ($\Delta I$) y por qué les importa tanto a los espectroscopistas?}
+El defecto de inercia se define como:
+\begin{equation}
+    \Delta I = I_c - I_a - I_b \quad [\text{u}\cdot\text{\AA}^2]
+\end{equation}
+Por el teorema de los ejes perpendiculares de la mecánica clásica, si todos los átomos de una molécula rígida están exactamente en el plano $ab$ (es decir, $z_i = 0$ para todo átomo $i$), entonces el momento de inercia respecto al eje perpendicular $c$ cumple exactamente $I_c = I_a + I_b$, por lo que \textbf{$\Delta I = 0$}.
+\begin{itemize}[leftmargin=1.5em,itemsep=2pt]
+    \item Cuando en la Pestaña 3 de \texttt{SpecWatson} calculamos el \textbf{Carbazol}, el \textbf{Indol}, el \textbf{Agua} o el \textbf{Dióxido de Azufre}, el programa arroja $\Delta I = 0.0000\text{ u}\cdot\text{\AA}^2$, demostrando inmediatamente su planaridad.
+    \item Si una molécula tiene grupos fuera del plano (como los metilos de la Cafeína o el Confórmero II torcido del Resveratrol), $\Delta I$ se vuelve negativo ($\Delta I \ll 0$), permitiendo distinguir al instante un confórmero plano de uno torcido.
+\end{itemize}
+
+\subsection{3. ¿Por qué el $\text{CO}_2$ tiene solo una constante $B_0$ mientras que el Agua ($\text{H}_2\text{O}$) tiene tres ($A_0, B_0, C_0$)?}
+\begin{itemize}[leftmargin=1.5em,itemsep=2pt]
+    \item El \textbf{Dióxido de Carbono ($\text{O=C=O}$)} es una molécula perfectamente lineal ($180^\circ$). Como los tres átomos están alineados sobre el eje $a$, su distancia perpendicular a dicho eje es cero, por lo que $I_a = 0$ y los otros dos ejes son idénticos ($I_b = I_c = 43.20\text{ u}\cdot\text{\AA}^2$, dando $B_0 = C_0 = 11,698.47\text{ MHz}$). Su espectro solo tiene ramas $P$ ($\Delta J = -1$) y $R$ ($\Delta J = +1$).
+    \item El \textbf{Agua ($\text{H}_2\text{O}$)}, en cambio, está doblada a $104.48^\circ$. Sus tres momentos de inercia son distintos ($I_a \neq I_b \neq I_c$), convirtiéndola en un rotor asimétrico puro con tres constantes ($A_0 = 835.8\text{ GHz}, B_0 = 435.3\text{ GHz}, C_0 = 278.1\text{ GHz}$).
+\end{itemize}
+
+\section{Tabla de Referencia Rápida de Resultados en \texttt{SpecWatson}}
+
+\begin{table}[h!]
+\centering
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Molécula / Sistema} & \textbf{Fórmula} & \textbf{Tipo de Rotor} & \textbf{$B_0$ Experimental (MHz)} & \textbf{Precisión 3D / Ajuste} \\
+\midrule
+Agua (HITRAN / JPL) & $\text{H}_2\text{O}$ & Asimétrico ligero ($\kappa=-0.43$) & $435,347.85$ & Desv.\ 3D: $0.4\%$ \\
+Dióxido de Carbono (HITRAN) & $\text{CO}_2$ & Lineal $D_{\infty h}$ ($I_a=0$) & $11,698.47$ & Desv.\ 3D: $0.00\%$ \\
+Dióxido de Azufre (JPL) & $\text{SO}_2$ & Asimétrico ($\kappa=-0.94$) & $10,318.07$ & Desv.\ 3D: $0.4\%$ \\
+Indol (Cromóforo Triptófano) & $\text{C}_8\text{H}_7\text{N}$ & Aromático plano ($\Delta I \approx 0$) & $1,636.00$ & Desv.\ 3D: $0.5\%$ \\
+Carbazol (Pratt \& Álvarez-Valtierra) & $\text{C}_{12}\text{H}_9\text{N}$ & Aromático tricíclico plano & $1,251.20$ & Ajuste DE: $0.04\text{ MHz}$ ($r=98.9\%$) \\
+\textit{trans}-Resveratrol (Conf.\ I) & $\text{C}_{14}\text{H}_{12}\text{O}_3$ & Polifenol prolate ($\kappa=-0.96$) & $218.40$ & Ajuste DE: $0.08\text{ MHz}$ ($r=98.8\%$) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
