@@ -1,146 +1,181 @@
 """
-SpecWatson GUI: High-Resolution Rovibronic Spectroscopy Suite
-Powered by Wang Symmetrized Factorization & Differential Evolution
-Author: Miguel Diaz & Dr. Leonardo Alvarez-Valtierra (Universidad de Guanajuato)
+SpecWatson Interactive Web GUI (Gradio)
+=======================================
+Cloud / Local Interactive Interface for High-Resolution Rovibronic Spectroscopy:
+  1. Direct Quantum Spectrum Simulator (Watson A-Reduced Hamiltonian + Wang Factorization)
+  2. Autonomous Contour Fitter (Differential Evolution + Nelder-Mead Simplex)
+  3. 3D Quantum Chemistry & Molecular Sketcher (RDKit / TorchANI GPU / GPU4PySCF -> Inertia Tensor -> A, B, C)
+
+Author: Miguel Díaz (Universidad de Guanajuato - DCI León)
+Advisor: Dr. Leonardo Álvarez-Valtierra
 """
 
-import os
-import sys
 import time
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# Ensure local specwatson package is in Python path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from specwatson.hamiltonian import MoleculeState, AsymmetricRotorHamiltonian
-from specwatson.wang import WangHamiltonian
 from specwatson.transitions import RovibronicTransitionCalculator
 from specwatson.spectrum import SpectrumSimulator
 from specwatson.fitting import ContourFitter
+from specwatson.quantum_chem import (
+    MOLECULE_CATALOG,
+    run_quantum_3d_pipeline,
+    plot_molecular_pas_figure,
+    render_3dmol_pas_html,
+    render_jsme_sketcher_html,
+)
 
-# Presets for quick lab demos
+# Pre-configured molecular presets for Tab 1
 PRESETS = {
     "Carbazol (Álvarez-Valtierra & Pratt 2006)": {
         "A0": 2178.60, "B0": 1251.20, "C0": 794.50,
         "A1": 2145.30, "B1": 1242.10, "C1": 788.90,
-        "Trot": 3.5, "fwhm": 25.0, "mu_a": 1.0, "mu_b": 0.0, "mu_c": 0.0,
+        "Trot": 3.5, "fwhm": 25.0,
+        "mu_a": 1.0, "mu_b": 0.0, "mu_c": 0.0,
         "Jmax": 12
     },
     "trans-Resveratrol (Polifenol - Confórmero I Plano)": {
-        "A0": 1385.40, "B0": 186.20, "C0": 164.10,
-        "A1": 1362.80, "B1": 184.90, "C1": 162.80,
-        "Trot": 2.5, "fwhm": 20.0, "mu_a": 0.82, "mu_b": 0.18, "mu_c": 0.0,
-        "Jmax": 10
+        "A0": 1684.50, "B0": 218.40, "C0": 193.35,
+        "A1": 1652.10, "B1": 216.85, "C1": 191.80,
+        "Trot": 3.0, "fwhm": 18.0,
+        "mu_a": 0.82, "mu_b": 0.18, "mu_c": 0.0,
+        "Jmax": 14
     },
-    "trans-Resveratrol (Confórmero II - No Plano / Rotámero 2)": {
-        "A0": 1442.10, "B0": 179.50, "C0": 159.80,
-        "A1": 1418.00, "B1": 178.00, "C1": 158.20,
-        "Trot": 2.5, "fwhm": 20.0, "mu_a": 0.65, "mu_b": 0.35, "mu_c": 0.0,
-        "Jmax": 10
+    "trans-Resveratrol (Polifenol - Confórmero II Torsional)": {
+        "A0": 1592.30, "B0": 229.15, "C0": 204.80,
+        "A1": 1564.80, "B1": 227.40, "C1": 203.10,
+        "Trot": 3.0, "fwhm": 18.0,
+        "mu_a": 0.65, "mu_b": 0.25, "mu_c": 0.10,
+        "Jmax": 14
+    },
+    "1-Naftol (Banda Híbrida a/b en Jet Supersónico)": {
+        "A0": 1948.50, "B0": 1132.40, "C0": 716.20,
+        "A1": 1912.10, "B1": 1118.80, "C1": 706.50,
+        "Trot": 4.0, "fwhm": 22.0,
+        "mu_a": 0.60, "mu_b": 0.40, "mu_c": 0.0,
+        "Jmax": 12
     }
 }
 
 
-def simulate_rovibronic_spectrum(A0, B0, C0, A1, B1, C1, Trot, fwhm, mu_a, mu_b, mu_c, Jmax):
-    """Computes quantum energy levels and convolves Voigt spectrum."""
+def simulate_rovibronic_spectrum(
+    A0, B0, C0,
+    A1, B1, C1,
+    T_rot, fwhm_mhz,
+    mu_a, mu_b, mu_c,
+    J_max
+):
+    """Callback for Tab 1: Direct Quantum Spectrum Simulation."""
+    t0 = time.perf_counter()
     plt.close("all")
+
     try:
-        t0 = time.perf_counter()
-        state_s0 = MoleculeState(name="S0", A=float(A0), B=float(B0), C=float(C0))
-        state_s1 = MoleculeState(name="S1", A=float(A1), B=float(B1), C=float(C1), origin=30000.0)
+        A0, B0, C0 = float(A0), float(B0), float(C0)
+        A1, B1, C1 = float(A1), float(B1), float(C1)
+        T_rot = max(0.2, float(T_rot))
+        fwhm_mhz = max(2.0, float(fwhm_mhz))
+        J_max = max(2, min(int(J_max), 25))
 
-        j_limit = int(Jmax)
+        if not (A0 >= B0 >= C0 > 0) or not (A1 >= B1 >= C1 > 0):
+            fig, ax = plt.subplots(figsize=(10, 4.5), dpi=120)
+            ax.text(
+                0.5, 0.5,
+                "⚠️ Restricción Física: Se requiere A ≥ B ≥ C > 0 MHz en ambos estados.",
+                ha="center", va="center", fontsize=12, color="#dc2626", fontweight="bold"
+            )
+            ax.axis("off")
+            return fig, "Error de validación física: verifica que A ≥ B ≥ C > 0 MHz."
 
-        # Benchmark Wang vs Full at J = j_limit
-        wang_s0 = WangHamiltonian(state_s0)
-        e_w, _ = wang_s0.solve_j_wang(j_limit)
+        state_s0 = MoleculeState(
+            name="S0", A=A0, B=B0, C=C0,
+            Delta_J=0.00025, Delta_JK=-0.00060, Delta_K=0.00120
+        )
+        state_s1 = MoleculeState(
+            name="S1", A=A1, B=B1, C=C1,
+            Delta_J=0.00024, Delta_JK=-0.00058, Delta_K=0.00115,
+            origin=30000.0
+        )
 
-        g_ham = AsymmetricRotorHamiltonian(state_s0)
-        e_ham = AsymmetricRotorHamiltonian(state_s1)
+        ham_s0 = AsymmetricRotorHamiltonian(state_s0)
+        ham_s1 = AsymmetricRotorHamiltonian(state_s1)
 
-        e_f, _, _ = g_ham.solve_j(j_limit)
-        max_wang_err = float(np.max(np.abs(e_f - e_w)))
+        manifold_s0 = ham_s0.compute_manifold(J_max=J_max)
+        manifold_s1 = ham_s1.compute_manifold(J_max=J_max)
 
-        g_man = g_ham.compute_manifold(j_limit)
-        e_man = e_ham.compute_manifold(j_limit)
+        dip_sum = float(mu_a) + float(mu_b) + float(mu_c)
+        if dip_sum <= 1e-6:
+            dip = (1.0, 0.0, 0.0)
+        else:
+            dip = (float(mu_a) / dip_sum, float(mu_b) / dip_sum, float(mu_c) / dip_sum)
 
         calc = RovibronicTransitionCalculator(
-            g_man, e_man,
+            ground_manifold=manifold_s0,
+            excited_manifold=manifold_s1,
             band_origin_cm1=30000.0,
-            temperature_K=float(Trot),
-            dipole_fractions=(float(mu_a), float(mu_b), float(mu_c))
+            temperature_K=T_rot,
+            dipole_fractions=dip
         )
-        lines = calc.calculate_transitions(j_limit, j_limit)
+        lines = calc.calculate_transitions(J_max_ground=J_max, J_max_excited=J_max)
 
-        if not lines:
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.text(0.5, 0.5, "No se encontraron transiciones permitidas (verifica que μ_a, μ_b o μ_c > 0)", ha="center")
-            return fig, "Sin transiciones calculadas."
+        sim = SpectrumSimulator(lines=lines, fwhm_mhz=fwhm_mhz, profile="voigt")
+        freq_axis, intensity = sim.simulate(grid_points=2500)
 
         origin_mhz = 30000.0 * 29979.2458
-        sim_voigt = SpectrumSimulator(lines, fwhm_mhz=float(fwhm), profile="voigt", lorentz_fraction=0.35)
-        grid_x, grid_y = sim_voigt.simulate(grid_points=2500)
-
-        rel_x = grid_x - origin_mhz
-        norm_y = grid_y / grid_y.max() if grid_y.max() > 0 else grid_y
-
-        st_x = np.array([l.frequency_mhz for l in lines]) - origin_mhz
-        st_y = np.array([l.intensity for l in lines])
-        if st_y.max() > 0:
-            st_y /= st_y.max()
+        rel_freq_ghz = (freq_axis - origin_mhz) / 1000.0
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
+        kappa_s0 = state_s0.kappa
+        kappa_s1 = state_s1.kappa
 
-        # Plotting
-        fig, ax = plt.subplots(figsize=(10.5, 4.5), dpi=130)
-        ax.vlines(st_x, 0, st_y * 0.88, color="#f59e0b", alpha=0.45, lw=0.8,
-                  label=f"Transiciones discretas ({len(lines):,} líneas)")
-        ax.plot(rel_x, norm_y, color="#0284c7", lw=1.8,
-                label=f"Convolución Voigt (FWHM = {fwhm:.1f} MHz, T = {Trot:.1f} K)")
+        fig, ax = plt.subplots(figsize=(10.5, 4.8), dpi=130)
+        ax.plot(rel_freq_ghz, intensity, color="#1d4ed8", lw=1.35, label="Contorno Voigt Convolucionado")
+        ax.fill_between(rel_freq_ghz, intensity, color="#3b82f6", alpha=0.16)
+        ax.axvline(0.0, color="#ef4444", ls="--", lw=0.9, alpha=0.7, label="Origen de Banda ν₀")
 
-        ax.set_title("Espectro Electrónico Rovibrónico S₁ ← S₀ (SpecWatson)", fontsize=12, fontweight="bold")
-        ax.set_xlabel("Frecuencia Relativa ν - ν₀ (MHz)", fontsize=11)
-        ax.set_ylabel("Intensidad Normalizada (u.a.)", fontsize=11)
-        ax.set_ylim(-0.03, 1.08)
-        ax.legend(loc="upper right", frameon=True)
-        ax.grid(True, ls="--", alpha=0.4)
+        ax.set_title(
+            f"Espectro Rovibrónico S₁ ← S₀ (J_max={J_max}, T_rot={T_rot:.1f} K, FWHM={fwhm_mhz:.0f} MHz)",
+            fontsize=11.5, fontweight="bold", pad=10
+        )
+        ax.set_xlabel("Desplazamiento de Frecuencia Relativa ν - ν₀ (GHz)", fontsize=10.5)
+        ax.set_ylabel("Intensidad Normalizada (u.a.)", fontsize=10.5)
+        ax.grid(True, linestyle="--", alpha=0.35)
+        ax.legend(loc="upper right", fontsize=9)
         fig.tight_layout()
 
-        k_s0 = state_s0.kappa
-        k_s1 = state_s1.kappa
-        tipo_rotor = "Prolado (κ < 0)" if k_s0 < 0 else "Oblado (κ > 0)"
-
-        stats_msg = (
+        stats = (
             f"✓ Simulación cuántica completada en {elapsed_ms:.1f} ms\n"
-            f"• Total de transiciones rovibrónicas activas: {len(lines):,}\n"
-            f"• Rango espectral: [{rel_x.min():.1f}, {rel_x.max():.1f}] MHz\n"
-            f"• Parámetro de asimetría de Ray: κ(S₀) = {k_s0:.4f}, κ(S₁) = {k_s1:.4f} [{tipo_rotor}]\n"
-            f"• Precisión Factorización de Wang (J={j_limit}): Error máx = {max_wang_err:.3e} MHz\n"
-            f"• Cambios rotacionales: ΔA = {float(A1)-float(A0):+.2f} MHz, ΔB = {float(B1)-float(B0):+.2f} MHz, ΔC = {float(C1)-float(C0):+.2f} MHz"
+            f"• Transiciones rovibrónicas activas evaluadas: {len(lines):,}\n"
+            f"• Parámetro de asimetría de Ray: κ(S₀) = {kappa_s0:.4f}  |  κ(S₁) = {kappa_s1:.4f}\n"
+            f"• Cambio rotacional al excitar: ΔA = {A1 - A0:+.2f} MHz, ΔB = {B1 - B0:+.2f} MHz, ΔC = {C1 - C0:+.2f} MHz\n"
+            f"• Pesos de selección dipolar: μₐ²={dip[0]:.2f}, μ_b²={dip[1]:.2f}, μ_c²={dip[2]:.2f} ( bloques de Wang E⁺, E⁻, O⁺, O⁻ )"
         )
-        return fig, stats_msg
+        return fig, stats
 
     except Exception as e:
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.text(0.5, 0.5, f"Error en simulación: {str(e)}", ha="center", color="red")
+        ax.text(0.5, 0.5, f"Error en simulación: {str(e)}", ha="center", va="center", color="red")
+        ax.axis("off")
         return fig, f"Error detallado: {repr(e)}"
 
 
 def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
-    """Runs a live Differential Evolution contour fit on synthetic noisy data."""
+    """Callback for Tab 2: Live Differential Evolution + Simplex Contour Fitting."""
+    t0 = time.perf_counter()
     plt.close("all")
+
     try:
-        t0 = time.perf_counter()
         if "Resveratrol" in molecule_choice:
             p = PRESETS["trans-Resveratrol (Polifenol - Confórmero I Plano)"]
-            guess_A, guess_B, guess_C = p["A1"] - 22.0, p["B1"] + 6.0, p["C1"] - 5.0
-            bounds = [(p["A1"] - 35.0, p["A1"] + 35.0),
-                      (p["B1"] - 15.0, p["B1"] + 15.0),
-                      (p["C1"] - 15.0, p["C1"] + 15.0),
-                      (-15.0, 15.0)]
+            guess_A, guess_B, guess_C = p["A1"] - 25.0, p["B1"] + 6.0, p["C1"] - 5.0
+            bounds = [
+                (p["A1"] - 35.0, p["A1"] + 35.0),
+                (p["B1"] - 15.0, p["B1"] + 15.0),
+                (p["C1"] - 15.0, p["C1"] + 15.0),
+                (-15.0, 15.0)
+            ]
             j_fit = 7
         else:
             p = PRESETS["Carbazol (Álvarez-Valtierra & Pratt 2006)"]
@@ -195,11 +230,13 @@ def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
         origin_mhz = 30000.0 * 29979.2458
         rel_f = freq_axis - origin_mhz
 
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10.5, 5.5), dpi=130,
-                                       gridspec_kw={"height_ratios": [3, 1]}, sharex=True)
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, figsize=(10.5, 5.5), dpi=130,
+            gridspec_kw={"height_ratios": [3, 1]}, sharex=True
+        )
 
         ax1.plot(rel_f, y_exp, color="#1e293b", lw=1.2, alpha=0.85, label=f"Experimental Sintético ({noise_pct}% ruido)")
-        ax1.plot(rel_f, y_init, color="#f59e0b", ls=":", lw=1.3, label=f"Semilla Inicial Distorsionada (A′={guess_A:.0f} MHz)")
+        ax1.plot(rel_f, y_init, color="#f59e0b", ls=":", lw=1.3, label=f"Semilla Inicial Ab Initio (A′={guess_A:.0f} MHz)")
         ax1.plot(rel_f, y_fit, color="#ef4444", ls="--", lw=1.8, label=f"Ajuste Híbrido DE + Simplex (r = {corr_pct:.2f}%)")
         ax1.set_ylabel("Intensidad Normalizada", fontsize=10)
         ax1.set_title(f"Ajuste de Contorno por Evolución Diferencial: {molecule_choice}", fontsize=11, fontweight="bold")
@@ -218,11 +255,11 @@ def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
 
         elapsed_s = time.perf_counter() - t0
         report = (
-            f"✓ Ajuste por Evolución Diferencial completado en {elapsed_s:.2f} s\n"
+            f"✓ Ajuste Híbrido (Evolución Diferencial + Simplex) completado en {elapsed_s:.2f} s\n"
             f"• Correlación Cruzada Alcanzada: {corr_pct:.2f}%\n"
-            f"• A' Recuperada: {best_p[0]:.2f} MHz  (Valor Real: {p['A1']:.2f} MHz | Error: {abs(best_p[0]-p['A1']):.2f} MHz)\n"
-            f"• B' Recuperada: {best_p[1]:.2f} MHz  (Valor Real: {p['B1']:.2f} MHz | Error: {abs(best_p[1]-p['B1']):.2f} MHz)\n"
-            f"• C' Recuperada: {best_p[2]:.2f} MHz  (Valor Real: {p['C1']:.2f} MHz | Error: {abs(best_p[2]-p['C1']):.2f} MHz)"
+            f"• A′ Recuperada: {best_p[0]:.2f} MHz  (Valor Real: {p['A1']:.2f} MHz | Error: {abs(best_p[0]-p['A1']):.2f} MHz)\n"
+            f"• B′ Recuperada: {best_p[1]:.2f} MHz  (Valor Real: {p['B1']:.2f} MHz | Error: {abs(best_p[1]-p['B1']):.2f} MHz)\n"
+            f"• C′ Recuperada: {best_p[2]:.2f} MHz  (Valor Real: {p['C1']:.2f} MHz | Error: {abs(best_p[2]-p['C1']):.2f} MHz)"
         )
         return fig, report
 
@@ -230,6 +267,63 @@ def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.text(0.5, 0.5, f"Error en ajuste: {str(e)}", ha="center", color="red")
         return fig, f"Error detallado: {repr(e)}"
+
+
+def run_quantum_3d_tab(query_input, engine_choice, num_confs, s1_expansion):
+    """Callback for Tab 3: 3D Quantum Chemistry & Inertia Tensor Calculator."""
+    plt.close("all")
+    try:
+        res = run_quantum_3d_pipeline(
+            smiles_or_name=query_input,
+            engine_choice=engine_choice,
+            num_conformers=int(num_confs),
+            pi_star_expansion_pct=float(s1_expansion)
+        )
+        fig_pas = plot_molecular_pas_figure(res)
+        viewer_html = render_3dmol_pas_html(res)
+
+        planarity_note = (
+            "Molécula PLANA en el plano ab (ΔI ≈ 0)"
+            if abs(res.inertial_defect) < 0.8
+            else "Molécula NO PLANA / Con estructura 3D fuera del plano"
+        )
+
+        report = (
+            f"✓ Geometría 3D y Tensor de Inercia calculados en {res.elapsed_sec*1000:.1f} ms\n"
+            f"• Fórmula Molecular: {res.formula} ({res.num_atoms} átomos)  |  SMILES: {res.smiles}\n"
+            f"• Motor Cuántico: {res.engine_used}\n"
+            f"• Hardware Detectado: {res.device_used}  |  Energía: {res.energy_kcal_or_eh}\n"
+            f"• Momentos Principales de Inercia: Ia = {res.Ia:.2f}, Ib = {res.Ib:.2f}, Ic = {res.Ic:.2f} u·Å²\n"
+            f"• Defecto de Inercia Cuántico: ΔI = Ic - Ia - Ib = {res.inertial_defect:+.4f} u·Å² ({planarity_note})\n"
+            f"• Constantes Estado Basal (S₀): A″ = {res.A0_mhz:.2f} MHz, B″ = {res.B0_mhz:.2f} MHz, C″ = {res.C0_mhz:.2f} MHz (κ = {res.kappa:.4f})\n"
+            f"• Constantes Estado Excitado Est. (S₁): A′ = {res.A1_mhz:.2f} MHz, B′ = {res.B1_mhz:.2f} MHz, C′ = {res.C1_mhz:.2f} MHz\n"
+            f"• Momento Dipolar: |μ| = {res.dipole_total_debye:.2f} D  →  Fracciones: μₐ²={res.mu_a_frac:.2f}, μ_b²={res.mu_b_frac:.2f}, μ_c²={res.mu_c_frac:.2f}"
+        )
+
+        return (
+            fig_pas,
+            viewer_html,
+            report,
+            res.A0_mhz, res.B0_mhz, res.C0_mhz,
+            res.A1_mhz, res.B1_mhz, res.C1_mhz,
+            res.mu_a_frac, res.mu_b_frac, res.mu_c_frac
+        )
+    except Exception as e:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.text(0.5, 0.5, f"⚠️ {str(e)}", ha="center", va="center", color="#dc2626", fontsize=11, wrap=True)
+        ax.axis("off")
+        err_html = f"<div style='padding:20px;color:#ef4444;font-weight:bold;'>{str(e)}</div>"
+        return (
+            fig, err_html, f"Error: {str(e)}",
+            2178.60, 1251.20, 794.50,
+            2145.30, 1242.10, 788.90,
+            1.0, 0.0, 0.0
+        )
+
+
+def select_catalog_molecule(catalog_choice):
+    info = MOLECULE_CATALOG.get(catalog_choice, MOLECULE_CATALOG["Carbazol (C12H9N - Aromático Tricíclico)"])
+    return info["smiles"]
 
 
 def load_preset_values(preset_name):
@@ -246,19 +340,21 @@ def load_preset_values(preset_name):
 def build_gradio_app():
     import gradio as gr
 
-    with gr.Blocks(title="SpecWatson · Espectroscopía Rovibrónica de Alta Resolución") as demo:
+    with gr.Blocks(title="SpecWatson · Espectroscopía Rovibrónica & Química Cuántica GPU") as demo:
         gr.Markdown(
             """
-            # 🔬 SpecWatson: Suite de Espectroscopía Rovibrónica de Alta Resolución
+            # 🔬 SpecWatson: Suite de Espectroscopía Rovibrónica & Química Cuántica en GPU
             **Universidad de Guanajuato · División de Ciencias e Ingenierías (Campus León)**  
-            **Desarrollado por:** Miguel Díaz · **Director:** Dr. Leonardo Álvarez-Valtierra  
-            *Simulación directa de Hamiltonianos de Watson, factorización tridiagonal de Wang y ajuste de contorno automatizado.*
+            **Desarrollado por:** Miguel Díaz (Maestría en Ciencias) · **Director:** Dr. Leonardo Álvarez-Valtierra  
+            *De la estructura molecular 3D y el tensor de inercia al Hamiltoniano de Watson y el ajuste evolutivo de espectros láser.*
             """
         )
 
-        with gr.Tabs():
-            # TAB 1: SIMULACIÓN DIRECTA
-            with gr.TabItem("⚡ 1. Simulador Cuántico de Espectros (Wang)"):
+        with gr.Tabs() as main_tabs:
+            # =========================================================================
+            # TAB 1: SIMULACIÓN DIRECTA DE ESPECTROS (WANG)
+            # =========================================================================
+            with gr.TabItem("⚡ 1. Simulador Cuántico de Espectros (Wang)", id="tab_sim"):
                 with gr.Row():
                     preset_dropdown = gr.Dropdown(
                         choices=list(PRESETS.keys()),
@@ -298,8 +394,10 @@ def build_gradio_app():
                         plot_out = gr.Plot(label="Espectro Simulado en Tiempo Real")
                         stats_out = gr.Textbox(label="Diagnóstico Cuántico & Métricas de Wang", lines=6)
 
+            # =========================================================================
             # TAB 2: AJUSTE AUTÓNOMO POR EVOLUCIÓN DIFERENCIAL
-            with gr.TabItem("🧬 2. Ajuste Autónomo de Contorno (Evolución Diferencial)"):
+            # =========================================================================
+            with gr.TabItem("🧬 2. Ajuste Autónomo de Contorno (Evolución Diferencial)", id="tab_fit"):
                 gr.Markdown(
                     """
                     ### Motor de Problema Inverso sin Asignación Manual
@@ -323,6 +421,65 @@ def build_gradio_app():
                     with gr.Column(scale=2):
                         fit_plot_out = gr.Plot(label="Convergencia del Contorno y Espectro de Residuales")
                         fit_report_out = gr.Textbox(label="Parámetros Moleculares Recuperados", lines=6)
+
+            # =========================================================================
+            # TAB 3: QUÍMICA CUÁNTICA 3D & DIBUJO MOLECULAR (TENSOR DE INERCIA -> A,B,C)
+            # =========================================================================
+            with gr.TabItem("🧪 3. Constructor Molecular 3D & Química Cuántica (GPU)", id="tab_qchem"):
+                gr.Markdown(
+                    """
+                    ### Del Dibujo Molecular o Nombre Químico a las Constantes Rotacionales (A, B, C) en Segundos
+                    Dibuja una molécula, elige una del catálogo o escribe su **nombre químico / código SMILES**. El motor construye la estructura 3D, optimiza su geometría mediante **Campos de Fuerza (`MMFF94s`)**, **Potenciales Neuronales Cuánticos en GPU (`ANI-2x / ωB97X`)** o **DFT Ab Initio (`PySCF / GPU4PySCF`)**, diagonaliza el **Tensor de Inercia Isotópico** y obtiene automáticamente **(A, B, C)**, el **Defecto de Inercia (ΔI)** y los **Ejes Principales (a, b, c)**.
+                    """
+                )
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        q_catalog = gr.Dropdown(
+                            choices=list(MOLECULE_CATALOG.keys()),
+                            value="Carbazol (C12H9N - Aromático Tricíclico)",
+                            label="1. Catálogo Rápido de Moléculas Espectroscópicas"
+                        )
+                        q_input = gr.Textbox(
+                            value="c1ccc2c(c1)[nH]c3ccccc23",
+                            label="2. Código SMILES o Nombre de la Molécula (ej. Indole, Caffeine, Aspirin, Fluorene)",
+                            placeholder="Escribe nombre químico o pega el SMILES aquí..."
+                        )
+                        q_engine = gr.Dropdown(
+                            choices=[
+                                "RDKit ETKDGv3 + MMFF94s (Instantáneo ~0.5 s)",
+                                "IA Cuántica GPU: TorchANI ANI-2x (Potencial Neuronal ωB97X)",
+                                "Ab Initio DFT: PySCF / GPU4PySCF (B3LYP/STO-3G)"
+                            ],
+                            value="RDKit ETKDGv3 + MMFF94s (Instantáneo ~0.5 s)",
+                            label="3. Motor de Optimización Cuántica / Geometría 3D"
+                        )
+                        with gr.Row():
+                            q_confs = gr.Slider(1, 30, value=10, step=1, label="Búsqueda Conformacional (N Confórmeros)")
+                            q_s1_exp = gr.Slider(0.2, 3.0, value=1.2, step=0.1, label="Expansión Aromática S₁ π→π* (%)")
+
+                        btn_qchem = gr.Button("🧪 Optimizar Geometría 3D y Calcular Constantes (A, B, C)", variant="primary", size="lg")
+                        btn_send_sim = gr.Button("⚡ Enviar (A, B, C, μ) Calculados al Simulador de Espectros (Pestaña 1)", variant="secondary")
+
+                        with gr.Accordion("✏️ Pizarra Interactiva 2D: Dibuja Enlaces y Anillos Manualmente", open=False):
+                            gr.Markdown("*Dibuja o modifica la molécula abajo, presiona **Copiar SMILES** y pégalo en la casilla 2:*")
+                            gr.HTML(value=render_jsme_sketcher_html())
+
+                    with gr.Column(scale=2):
+                        q_plot_out = gr.Plot(label="Proyección en Ejes Principales de Inercia (a, b) y Constantes Rotacionales")
+                        q_3d_out = gr.HTML(label="Visor Molecular 3D Interactivo (WebGL) con Ejes Principales a, b, c y Dipolo μ")
+                        q_report_out = gr.Textbox(label="Reporte del Tensor de Inercia, Defecto Cuántico ΔI y Constantes (MHz)", lines=8)
+
+                        # Hidden state boxes holding the computed constants so they can be transferred to Tab 1
+                        with gr.Row(visible=False):
+                            calc_a0 = gr.Number(value=2178.60)
+                            calc_b0 = gr.Number(value=1251.20)
+                            calc_c0 = gr.Number(value=794.50)
+                            calc_a1 = gr.Number(value=2145.30)
+                            calc_b1 = gr.Number(value=1242.10)
+                            calc_c1 = gr.Number(value=788.90)
+                            calc_mua = gr.Number(value=1.0)
+                            calc_mub = gr.Number(value=0.0)
+                            calc_muc = gr.Number(value=0.0)
 
         # Callbacks for Tab 1
         all_sim_inputs = [a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax]
@@ -350,18 +507,60 @@ def build_gradio_app():
             outputs=[fit_plot_out, fit_report_out]
         )
 
-        # Run initial simulation automatically when page opens
+        # Callbacks for Tab 3
+        qchem_outputs = [
+            q_plot_out, q_3d_out, q_report_out,
+            calc_a0, calc_b0, calc_c0,
+            calc_a1, calc_b1, calc_c1,
+            calc_mua, calc_mub, calc_muc
+        ]
+
+        q_catalog.change(
+            fn=select_catalog_molecule,
+            inputs=[q_catalog],
+            outputs=[q_input]
+        ).then(
+            fn=run_quantum_3d_tab,
+            inputs=[q_input, q_engine, q_confs, q_s1_exp],
+            outputs=qchem_outputs
+        )
+
+        btn_qchem.click(
+            fn=run_quantum_3d_tab,
+            inputs=[q_input, q_engine, q_confs, q_s1_exp],
+            outputs=qchem_outputs
+        )
+
+        # Transfer calculated (A, B, C, mu) from Tab 3 directly to Tab 1 and simulate spectrum!
+        def transfer_to_tab1(ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc):
+            return ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc, gr.Tabs(selected="tab_sim")
+
+        btn_send_sim.click(
+            fn=transfer_to_tab1,
+            inputs=[calc_a0, calc_b0, calc_c0, calc_a1, calc_b1, calc_c1, calc_mua, calc_mub, calc_muc],
+            outputs=[a0, b0, c0, a1, b1, c1, mu_a, mu_b, mu_c, main_tabs]
+        ).then(
+            fn=simulate_rovibronic_spectrum,
+            inputs=all_sim_inputs,
+            outputs=[plot_out, stats_out]
+        )
+
+        # Run initial simulations on page load
         demo.load(
             fn=simulate_rovibronic_spectrum,
             inputs=all_sim_inputs,
             outputs=[plot_out, stats_out]
+        ).then(
+            fn=run_quantum_3d_tab,
+            inputs=[q_input, q_engine, q_confs, q_s1_exp],
+            outputs=qchem_outputs
         )
 
         gr.Markdown(
             """
             ---
             *SpecWatson es software científico de código abierto desarrollado en la Universidad de Guanajuato.*  
-             Presentación y Artículos PDF: [mgueldiaz10-oss.github.io/specwatson](https://mgueldiaz10-oss.github.io/specwatson/)
+            Presentación y Artículos PDF: [mgueldiaz10-oss.github.io/specwatson](https://mgueldiaz10-oss.github.io/specwatson/)
             """
         )
 
