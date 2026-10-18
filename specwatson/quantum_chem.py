@@ -15,6 +15,8 @@ Provides:
 """
 
 import json
+import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
@@ -22,6 +24,18 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+
+def _ensure_rdkit():
+    """Automatically installs rdkit via pip if missing in the current environment (e.g. Google Colab)."""
+    try:
+        import rdkit  # noqa: F401
+    except ImportError:
+        print("[SpecWatson] Instalando rdkit automáticamente en el entorno...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "rdkit"])
+
+
+_ensure_rdkit()
 
 # Fundamental spectroscopy conversion factor: h / (8 * pi^2) in MHz * u * Angstrom^2
 PLANCK_INERTIA_FACTOR_MHZ = 505379.006
@@ -417,6 +431,7 @@ def run_quantum_3d_pipeline(
     inertia tensor diagonalization, and rotational constant extraction.
     """
     t0 = time.perf_counter()
+    _ensure_rdkit()
     from rdkit import Chem
     from rdkit.Chem import AllChem, rdMolDescriptors
 
