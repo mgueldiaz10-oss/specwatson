@@ -39,6 +39,11 @@ class MoleculeState:
             return 0.0
         return (2.0 * self.B - self.A - self.C) / (self.A - self.C)
 
+    def ray_asymmetry(self) -> float:
+        """Method alias for Ray's asymmetry parameter kappa."""
+        return self.kappa
+
+
 
 class AsymmetricRotorHamiltonian:
     """
