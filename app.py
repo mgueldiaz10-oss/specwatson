@@ -11,7 +11,9 @@ Author: Miguel Díaz (Maestría en Ciencias - DCI, Universidad de Guanajuato)
 Academic Advisors & Support: Dr. Leonardo Álvarez-Valtierra & Dr. Alejandro Gil-Villegas (SNII Nivel III)
 """
 
+import os
 import time
+import tempfile
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -138,9 +140,19 @@ def simulate_rovibronic_spectrum(
     mu_a, mu_b, mu_c,
     J_max,
     preset_name="Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)",
-    overlay_exp=True
+    show_sim=True,
+    overlay_exp=True,
+    mirror_exp=False,
+    alpha_sim=0.85,
+    alpha_exp=0.85,
+    offset_exp=0.0,
+    zoom_x_factor=1.0,
+    pan_x_pct=0.0,
+    zoom_y_factor=1.0,
+    pan_y_offset=0.0,
+    render_dpi=130
 ):
-    """Callback for Tab 1: Direct Quantum Spectrum Simulation + Optional Literature Overlay."""
+    """Callback for Tab 1: Direct Quantum Spectrum Simulation + Interactive Visibility, Opacity, Zoom & Pan."""
     t0 = time.perf_counter()
     plt.close("all")
 
@@ -150,6 +162,13 @@ def simulate_rovibronic_spectrum(
         T_rot = max(0.2, float(T_rot))
         fwhm_mhz = max(2.0, float(fwhm_mhz))
         J_max = max(2, min(int(J_max), 25))
+        alpha_sim = float(np.clip(alpha_sim, 0.05, 1.0))
+        alpha_exp = float(np.clip(alpha_exp, 0.05, 1.0))
+        offset_exp = float(offset_exp)
+        zoom_x_factor = max(1.0, float(zoom_x_factor))
+        pan_x_pct = float(np.clip(pan_x_pct, -100.0, 100.0))
+        zoom_y_factor = max(0.2, float(zoom_y_factor))
+        pan_y_offset = float(pan_y_offset)
 
         if not (A0 >= B0 >= C0 > 0) or not (A1 >= B1 >= C1 > 0):
             fig, ax = plt.subplots(figsize=(10, 4.5), dpi=120)
@@ -198,10 +217,11 @@ def simulate_rovibronic_spectrum(
         origin_mhz = 30000.0 * 29979.2458
         rel_freq_ghz = (freq_axis - origin_mhz) / 1000.0
 
-        fig, ax = plt.subplots(figsize=(10.5, 4.8), dpi=130)
+        fig, ax = plt.subplots(figsize=(10.5, 4.9), dpi=int(render_dpi))
 
         ref_note = ""
-        if overlay_exp and preset_name in PRESETS:
+        y_ref_plotted = None
+        if preset_name in PRESETS:
             p_ref = PRESETS[preset_name]
             s0_ref = MoleculeState("S0_ref", A=p_ref["A0"], B=p_ref["B0"], C=p_ref["C0"],
                                    Delta_J=0.00025, Delta_JK=-0.00060, Delta_K=0.00120)
@@ -220,19 +240,62 @@ def simulate_rovibronic_spectrum(
             norm_ref = np.linalg.norm(y_ref)
             corr_exp = (float(np.dot(intensity, y_ref) / (norm_sim * norm_ref)) * 100.0) if (norm_sim > 0 and norm_ref > 0) else 0.0
 
-            ax.plot(
-                rel_freq_ghz, y_ref, color="#334155", ls="--", lw=1.25, alpha=0.8,
-                label=f"Referencia Literatura ({p_ref.get('ref', 'Experimental')[:36]}...)"
-            )
             ref_note = (
                 f"\n• Comparación vs. Literatura ({p_ref.get('ref', '')}): "
                 f"Correlación r = {corr_exp:.2f}% | "
                 f"ΔA′={A1 - p_ref['A1']:+.2f} MHz, ΔB′={B1 - p_ref['B1']:+.2f} MHz, ΔC′={C1 - p_ref['C1']:+.2f} MHz"
             )
 
-        ax.plot(rel_freq_ghz, intensity, color="#1d4ed8", lw=1.4, label="Simulación Cuántica Actual (SpecWatson)")
-        ax.fill_between(rel_freq_ghz, intensity, color="#3b82f6", alpha=0.16)
-        ax.axvline(0.0, color="#ef4444", ls=":", lw=0.9, alpha=0.7, label="Origen de Banda ν₀")
+            if overlay_exp:
+                y_ref_plotted = (-y_ref + offset_exp) if mirror_exp else (y_ref + offset_exp)
+                exp_label_mode = "Invertido Espejo" if mirror_exp else (f"Offset {offset_exp:+.2f}" if abs(offset_exp) > 1e-3 else "Superpuesto")
+                ax.plot(
+                    rel_freq_ghz, y_ref_plotted,
+                    color="#ea580c", ls="--", lw=1.45, alpha=alpha_exp, zorder=3,
+                    label=f"Experimental / Literatura [{exp_label_mode}] ({p_ref.get('ref', 'Ref')[:32]}...)"
+                )
+                ax.fill_between(
+                    rel_freq_ghz, offset_exp if not mirror_exp else offset_exp, y_ref_plotted,
+                    color="#f97316", alpha=0.10 * alpha_exp, zorder=2
+                )
+
+        if show_sim:
+            ax.plot(
+                rel_freq_ghz, intensity,
+                color="#1d4ed8", lw=1.45, alpha=alpha_sim, zorder=4,
+                label="Simulación Cuántica Actual (SpecWatson)"
+            )
+            ax.fill_between(
+                rel_freq_ghz, 0.0, intensity,
+                color="#3b82f6", alpha=0.18 * alpha_sim, zorder=2
+            )
+
+        if not show_sim and not overlay_exp:
+            ax.text(
+                0.5, 0.5,
+                "👁️ Ambas curvas están ocultas. Marca 'Mostrar Espectro Simulado' o 'Mostrar Experimental' arriba.",
+                transform=ax.transAxes, ha="center", va="center", fontsize=10.5, color="#64748b", fontweight="bold"
+            )
+
+        if mirror_exp:
+            ax.axhline(0.0, color="#475569", lw=0.8, ls="-", alpha=0.6)
+        ax.axvline(0.0, color="#ef4444", ls=":", lw=0.95, alpha=0.7, label="Origen de Banda ν₀")
+
+        # Apply Horizontal Zoom & Pan
+        f_min, f_max = float(rel_freq_ghz[0]), float(rel_freq_ghz[-1])
+        f_mid = 0.5 * (f_min + f_max)
+        half_span = 0.5 * (f_max - f_min)
+        view_half_span = half_span / zoom_x_factor
+        max_pan = max(0.0, half_span - view_half_span * 0.25)
+        center_x = f_mid + (pan_x_pct / 100.0) * max_pan
+        ax.set_xlim(center_x - view_half_span, center_x + view_half_span)
+
+        # Apply Vertical Zoom & Pan (Up / Down)
+        base_ymin = -1.12 if mirror_exp else min(-0.06, offset_exp - 0.06)
+        base_ymax = max(1.12, 1.06 + offset_exp) if not mirror_exp else max(1.12, offset_exp + 0.1)
+        y_mid = 0.5 * (base_ymin + base_ymax) - pan_y_offset
+        y_half = 0.5 * (base_ymax - base_ymin) / zoom_y_factor
+        ax.set_ylim(y_mid - y_half, y_mid + y_half)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         kappa_s0 = state_s0.kappa
@@ -245,7 +308,7 @@ def simulate_rovibronic_spectrum(
         ax.set_xlabel("Desplazamiento de Frecuencia Relativa ν - ν₀ (GHz)", fontsize=10.5)
         ax.set_ylabel("Intensidad Normalizada (u.a.)", fontsize=10.5)
         ax.grid(True, linestyle="--", alpha=0.35)
-        ax.legend(loc="upper right", fontsize=8.5)
+        ax.legend(loc="upper right", fontsize=8.5, framealpha=0.92)
         fig.tight_layout()
 
         stats = (
@@ -263,6 +326,61 @@ def simulate_rovibronic_spectrum(
         ax.text(0.5, 0.5, f"Error en simulación: {str(e)}", ha="center", va="center", color="red")
         ax.axis("off")
         return fig, f"Error detallado: {repr(e)}"
+
+
+def export_spectrum_high_dpi(
+    A0, B0, C0,
+    A1, B1, C1,
+    T_rot, fwhm_mhz,
+    mu_a, mu_b, mu_c,
+    J_max,
+    preset_name,
+    show_sim,
+    overlay_exp,
+    mirror_exp,
+    alpha_sim,
+    alpha_exp,
+    offset_exp,
+    zoom_x_factor,
+    pan_x_pct,
+    zoom_y_factor,
+    pan_y_offset,
+    export_format_choice
+):
+    """Renders the exact current view of the spectrum and saves it at 300 DPI or 600 DPI (PNG / PDF)."""
+    is_600 = "600" in str(export_format_choice)
+    is_pdf = "PDF" in str(export_format_choice)
+    dpi_val = 600 if is_600 else 300
+    ext = "pdf" if is_pdf else "png"
+
+    fig, _ = simulate_rovibronic_spectrum(
+        A0, B0, C0, A1, B1, C1,
+        T_rot, fwhm_mhz, mu_a, mu_b, mu_c, J_max,
+        preset_name=preset_name,
+        show_sim=show_sim,
+        overlay_exp=overlay_exp,
+        mirror_exp=mirror_exp,
+        alpha_sim=alpha_sim,
+        alpha_exp=alpha_exp,
+        offset_exp=offset_exp,
+        zoom_x_factor=zoom_x_factor,
+        pan_x_pct=pan_x_pct,
+        zoom_y_factor=zoom_y_factor,
+        pan_y_offset=pan_y_offset,
+        render_dpi=dpi_val
+    )
+
+    safe_mol = str(preset_name).split("(")[0].strip().replace(" ", "_").replace("-", "_")
+    filename = f"SpecWatson_{safe_mol}_{dpi_val}DPI.{ext}"
+    out_path = os.path.join(tempfile.gettempdir(), filename)
+    fig.savefig(out_path, dpi=dpi_val, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    return out_path
+
+
+def reset_view_controls():
+    """Resets visibility, opacity, vertical offset, and zoom/pan controls to defaults."""
+    return True, True, False, 0.85, 0.85, 0.0, 1.0, 0.0, 1.0, 0.0
 
 
 def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
@@ -483,11 +601,21 @@ def build_gradio_app():
                         choices=list(PRESETS.keys()),
                         value="Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)",
                         label="📁 Seleccionar Sistema Molecular (Aromáticos LIF y Estándares HITRAN / JPL)",
-                        scale=2
+                        scale=3
+                    )
+                    show_sim_chk = gr.Checkbox(
+                        value=True,
+                        label="🔵 Mostrar Espectro Simulado (SpecWatson)",
+                        scale=1
                     )
                     overlay_exp_chk = gr.Checkbox(
                         value=True,
-                        label="📊 Superponer Espectro Experimental de Referencia (HITRAN / JPL / Literatura)",
+                        label="🟠 Mostrar Experimental (Referencia)",
+                        scale=1
+                    )
+                    mirror_exp_chk = gr.Checkbox(
+                        value=False,
+                        label="🪞 Modo Espejo JCP (Invertir Experimental Abajo)",
                         scale=1
                     )
 
@@ -521,6 +649,35 @@ def build_gradio_app():
 
                     with gr.Column(scale=2):
                         plot_out = gr.Plot(label="Espectro Simulado vs. Referencia Experimental")
+
+                        with gr.Accordion("🎛️ Controles de Visualización: Opacidad, Desplazamiento Arriba/Abajo, Zoom y Exportación (300/600 DPI)", open=True):
+                            with gr.Row():
+                                alpha_sim_slider = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="🔵 Opacidad Simulado")
+                                alpha_exp_slider = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="🟠 Opacidad Experimental")
+                                offset_exp_slider = gr.Slider(-1.2, 1.2, value=0.0, step=0.05, label="↕️ Separar Experimental (Offset ΔY)")
+
+                            with gr.Row():
+                                zoom_x_slider = gr.Slider(1.0, 12.0, value=1.0, step=0.5, label="🔍 Zoom Horizontal (1x–12x)")
+                                pan_x_slider = gr.Slider(-100.0, 100.0, value=0.0, step=2.0, label="↔️ Desplazar Izq / Der (%)")
+                                zoom_y_slider = gr.Slider(0.3, 4.0, value=1.0, step=0.1, label="🔍 Zoom Vertical (Altura)")
+                                pan_y_slider = gr.Slider(-1.0, 1.0, value=0.0, step=0.05, label="↕️ Desplazar Vista Arriba / Abajo")
+
+                            with gr.Row():
+                                btn_reset_view = gr.Button("🔄 Restablecer Vista / Zoom / Opacidad", variant="secondary", scale=1)
+                                export_dpi_dropdown = gr.Dropdown(
+                                    choices=[
+                                        "600 DPI — PNG Ultra-Alta Resolución (Calidad Revista JCP)",
+                                        "300 DPI — PNG Alta Resolución (Tesis / Presentación)",
+                                        "600 DPI — PDF Vectorial (Artículo LaTeX)"
+                                    ],
+                                    value="600 DPI — PNG Ultra-Alta Resolución (Calidad Revista JCP)",
+                                    label="🖨️ Formato y Resolución de Exportación",
+                                    scale=2
+                                )
+                                btn_export_dpi = gr.Button("📥 Exportar Gráfica Actual (300 / 600 DPI)", variant="primary", scale=1)
+
+                            export_file_out = gr.File(label="📄 Archivo Exportado (Haz clic en el enlace derecho para descargar a tu PC)")
+
                         stats_out = gr.Textbox(label="Diagnóstico Cuántico, Métricas de Wang & Correlación con Literatura", lines=7)
 
             # =========================================================================
@@ -609,7 +766,18 @@ def build_gradio_app():
 
         # Callbacks for Tab 1
         preset_numeric_outputs = [a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax]
-        all_sim_inputs = [a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax, preset_dropdown, overlay_exp_chk]
+        view_controls = [
+            show_sim_chk, overlay_exp_chk, mirror_exp_chk,
+            alpha_sim_slider, alpha_exp_slider, offset_exp_slider,
+            zoom_x_slider, pan_x_slider, zoom_y_slider, pan_y_slider
+        ]
+        all_sim_inputs = [
+            a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax,
+            preset_dropdown,
+            show_sim_chk, overlay_exp_chk, mirror_exp_chk,
+            alpha_sim_slider, alpha_exp_slider, offset_exp_slider,
+            zoom_x_slider, pan_x_slider, zoom_y_slider, pan_y_slider
+        ]
 
         preset_dropdown.change(
             fn=load_preset_values,
@@ -621,10 +789,27 @@ def build_gradio_app():
             outputs=[plot_out, stats_out]
         )
 
-        overlay_exp_chk.change(
+        for ctrl in view_controls:
+            ctrl.change(
+                fn=simulate_rovibronic_spectrum,
+                inputs=all_sim_inputs,
+                outputs=[plot_out, stats_out]
+            )
+
+        btn_reset_view.click(
+            fn=reset_view_controls,
+            inputs=[],
+            outputs=view_controls
+        ).then(
             fn=simulate_rovibronic_spectrum,
             inputs=all_sim_inputs,
             outputs=[plot_out, stats_out]
+        )
+
+        btn_export_dpi.click(
+            fn=export_spectrum_high_dpi,
+            inputs=all_sim_inputs + [export_dpi_dropdown],
+            outputs=[export_file_out]
         )
 
         btn_sim.click(
@@ -666,12 +851,12 @@ def build_gradio_app():
 
         # Transfer calculated (A, B, C, mu) from Tab 3 directly to Tab 1 and simulate spectrum!
         def transfer_to_tab1(ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc):
-            return ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc, False, gr.Tabs(selected="tab_sim")
+            return ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc, True, False, gr.Tabs(selected="tab_sim")
 
         btn_send_sim.click(
             fn=transfer_to_tab1,
             inputs=[calc_a0, calc_b0, calc_c0, calc_a1, calc_b1, calc_c1, calc_mua, calc_mub, calc_muc],
-            outputs=[a0, b0, c0, a1, b1, c1, mu_a, mu_b, mu_c, overlay_exp_chk, main_tabs]
+            outputs=[a0, b0, c0, a1, b1, c1, mu_a, mu_b, mu_c, show_sim_chk, overlay_exp_chk, main_tabs]
         ).then(
             fn=simulate_rovibronic_spectrum,
             inputs=all_sim_inputs,
