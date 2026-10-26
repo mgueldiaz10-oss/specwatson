@@ -5,9 +5,10 @@ Cloud / Local Interactive Interface for High-Resolution Rovibronic Spectroscopy:
   1. Direct Quantum Spectrum Simulator:
      - Selectable Hamiltonian Model: Pure Rigid Rotor (JB95 standard) vs. Watson A-Reduction Centrifugal Distortion
      - Selectable Spectral Selection Rules: Pure Type a, Pure Type b, Pure Type c, or Hybrid (a + b + c) with sub-band decomposition
+     - Standard JCP / JB95 Mirror View: Experimental Spectrum on Top (+Y) and Simulated Spectrum Inverted Below (-Y)
      - Native Spectrometer File Loader: Reads raw fluorescence scans (`PmtFla`, `.dat`, `.txt`, `.csv`) and JB95 line lists (`IAR.asc`, `.asc`)
-     - Interactive Visibility, Mirror Mode, Opacity, X/Y Zoom & Pan, and 300/600 DPI Publication Export
-  2. Autonomous Contour Fitter (Differential Evolution + Nelder-Mead Simplex) on Real Spectrometer Data (`PmtFla` / `.asc`)
+     - Interactive Visibility, Opacity, X/Y Zoom & Pan, and 300/600 DPI Publication Export
+  2. Automatic Quantum Line Assigner (`.asc` / JB95 Generator) & Autonomous Contour Fitter (Differential Evolution + Simplex)
   3. 3D Quantum Chemistry & Molecular Sketcher (RDKit / TorchANI GPU / GPU4PySCF -> Inertia Tensor -> A, B, C, κ, μ)
 
 Author: Miguel Díaz (Maestría en Ciencias - DCI, Universidad de Guanajuato)
@@ -26,7 +27,7 @@ from specwatson.hamiltonian import MoleculeState, AsymmetricRotorHamiltonian
 from specwatson.transitions import RovibronicTransitionCalculator, WAVENUMBER_TO_MHZ, MHZ_TO_WAVENUMBER
 from specwatson.spectrum import SpectrumSimulator
 from specwatson.fitting import ContourFitter
-from specwatson.io_parsers import parse_spectrometer_file
+from specwatson.io_parsers import parse_spectrometer_file, auto_assign_spectrometer_lines
 from specwatson.quantum_chem import (
     MOLECULE_CATALOG,
     EXPERIMENTAL_LITERATURE_DB,
@@ -257,7 +258,7 @@ def simulate_rovibronic_spectrum(
     show_subbands=False,
     show_sim=True,
     overlay_exp=True,
-    mirror_exp=False,
+    mirror_exp=True,
     alpha_sim=0.85,
     alpha_exp=0.85,
     offset_exp=0.0,
@@ -267,7 +268,12 @@ def simulate_rovibronic_spectrum(
     pan_y_offset=0.0,
     render_dpi=130
 ):
-    """Callback for Tab 1: Direct Quantum Spectrum Simulation + Real Spectrometer Overlay (`PmtFla` / `IAR.asc`)."""
+    """
+    Callback for Tab 1: Direct Quantum Spectrum Simulation + Real Spectrometer Overlay (`PmtFla` / `IAR.asc`).
+    Follows standard JCP / JB95 Mirror Convention:
+      - Experimental Spectrum is plotted on TOP (+Y, positive).
+      - Simulated Spectrum is plotted inverted on BOTTOM (-Y, negative) when mirror_exp is enabled.
+    """
     t0 = time.perf_counter()
     plt.close("all")
 
@@ -361,7 +367,6 @@ def simulate_rovibronic_spectrum(
             if os.path.exists(up_path):
                 exp_dataset = parse_spectrometer_file(up_path, fwhm_mhz=fwhm_mhz, grid_points=2500)
                 origin_mhz = exp_dataset.origin_mhz
-                # Re-center simulated lines around the uploaded file's band origin
                 shift_mhz = origin_mhz - (origin_cm1 * WAVENUMBER_TO_MHZ)
                 for ln in lines:
                     ln.frequency_mhz += shift_mhz
@@ -373,7 +378,6 @@ def simulate_rovibronic_spectrum(
             freq_axis, intensity, sub_dict = sim.simulate_subbands(
                 grid_points=len(exp_dataset.freq_mhz), freq_range_mhz=f_range
             )
-            # Align freq_axis exactly to experimental spectrometer points for exact correlation
             y_sim_interp = np.interp(exp_dataset.freq_mhz, freq_axis, intensity)
             freq_axis = exp_dataset.freq_mhz
             intensity = y_sim_interp
@@ -403,7 +407,6 @@ def simulate_rovibronic_spectrum(
             )
             exp_legend_title = f"Experimental Espectrómetro ({exp_dataset.filename})"
         else:
-            # Synthesize literature reference from PRESETS
             s0_ref = MoleculeState("S0_ref", A=p_ref["A0"], B=p_ref["B0"], C=p_ref["C0"])
             s1_ref = MoleculeState("S1_ref", A=p_ref["A1"], B=p_ref["B1"], C=p_ref["C1"], origin=origin_cm1)
             m0_ref = AsymmetricRotorHamiltonian(s0_ref).compute_manifold(J_max=J_max)
@@ -425,32 +428,38 @@ def simulate_rovibronic_spectrum(
             )
             exp_legend_title = f"Experimental / Literatura ({p_ref.get('ref', 'Ref')[:28]}...)"
 
+        # STANDARD JCP / JB95 MIRROR CONVENTION:
+        # Experimental is ALWAYS on TOP (+Y), and Simulated is inverted on BOTTOM (-Y) when mirror_exp=True!
         if overlay_exp:
-            y_ref_plotted = (-y_ref + offset_exp) if mirror_exp else (y_ref + offset_exp)
-            exp_label_mode = "Espejo Invertido" if mirror_exp else (f"Offset {offset_exp:+.2f}" if abs(offset_exp) > 1e-3 else "Superpuesto")
+            y_ref_plotted = y_ref + offset_exp
+            exp_pos_label = "Arriba +Y" if mirror_exp else (f"Offset {offset_exp:+.2f}" if abs(offset_exp) > 1e-3 else "Superpuesto")
             ax.plot(
                 rel_freq_ghz, y_ref_plotted,
-                color="#ea580c", ls="--", lw=1.35, alpha=alpha_exp, zorder=3,
-                label=f"{exp_legend_title} [{exp_label_mode}]"
+                color="#ea580c", ls="-" if mirror_exp else "--", lw=1.35, alpha=alpha_exp, zorder=4,
+                label=f"{exp_legend_title} [{exp_pos_label}]"
             )
             ax.fill_between(
                 rel_freq_ghz, offset_exp, y_ref_plotted,
-                color="#f97316", alpha=0.10 * alpha_exp, zorder=2
+                color="#f97316", alpha=0.12 * alpha_exp, zorder=2
             )
 
         if show_sim:
+            sim_sign = -1.0 if mirror_exp else 1.0
+            y_sim_plotted = sim_sign * intensity
+            sim_pos_label = "Espejo Invertido Abajo -Y" if mirror_exp else "Arriba +Y"
             ax.plot(
-                rel_freq_ghz, intensity,
+                rel_freq_ghz, y_sim_plotted,
                 color="#1d4ed8", lw=1.45, alpha=alpha_sim, zorder=4,
-                label=f"Simulado SpecWatson [{ham_short_label} · Selección: {sel_crit.upper()}]"
+                label=f"Simulado SpecWatson [{ham_short_label} · Tipo {sel_crit.upper()} · {sim_pos_label}]"
             )
             ax.fill_between(
-                rel_freq_ghz, 0.0, intensity,
+                rel_freq_ghz, 0.0, y_sim_plotted,
                 color="#3b82f6", alpha=0.18 * alpha_sim, zorder=2
             )
 
         # Optional decomposition of Type a, Type b, Type c sub-bands
         if show_subbands:
+            sim_sign = -1.0 if mirror_exp else 1.0
             sub_styles = {
                 "a": ("#dc2626", ":", "Sub-espectro Tipo a (ΔKa=par, ΔKc=impar)"),
                 "b": ("#16a34a", "-.", "Sub-espectro Tipo b (ΔKa=impar, ΔKc=impar)"),
@@ -458,17 +467,17 @@ def simulate_rovibronic_spectrum(
             }
             for btype, (col, ls_st, lbl_sub) in sub_styles.items():
                 if btype in sub_dict and len(sub_dict[btype]) == len(rel_freq_ghz) and np.max(sub_dict[btype]) > 1e-4:
-                    ax.plot(rel_freq_ghz, sub_dict[btype], color=col, ls=ls_st, lw=1.25, alpha=0.9, zorder=5, label=lbl_sub)
+                    ax.plot(rel_freq_ghz, sim_sign * sub_dict[btype], color=col, ls=ls_st, lw=1.25, alpha=0.9, zorder=5, label=lbl_sub)
 
         if not show_sim and not overlay_exp:
             ax.text(
                 0.5, 0.5,
-                "👁️ Ambas curvas están ocultas. Marca 'Mostrar Espectro Simulado' o 'Mostrar Experimental' arriba.",
+                "👁️ Ambas curvas están ocultas. Marca 'Mostrar Simulado' o 'Mostrar Experimental' arriba.",
                 transform=ax.transAxes, ha="center", va="center", fontsize=10.5, color="#64748b", fontweight="bold"
             )
 
         if mirror_exp:
-            ax.axhline(0.0, color="#475569", lw=0.8, ls="-", alpha=0.6)
+            ax.axhline(0.0, color="#334155", lw=1.0, ls="-", alpha=0.75)
         ax.axvline(0.0, color="#ef4444", ls=":", lw=0.95, alpha=0.7, label=f"Origen ν₀ ({origin_mhz*MHZ_TO_WAVENUMBER:.2f} cm⁻¹)")
 
         # Apply Horizontal Zoom & Pan
@@ -481,8 +490,8 @@ def simulate_rovibronic_spectrum(
         ax.set_xlim(center_x - view_half_span, center_x + view_half_span)
 
         # Apply Vertical Zoom & Pan (Up / Down)
-        base_ymin = -1.12 if mirror_exp else min(-0.06, offset_exp - 0.06)
-        base_ymax = max(1.12, 1.06 + offset_exp) if not mirror_exp else max(1.12, offset_exp + 0.1)
+        base_ymin = -1.14 if mirror_exp else min(-0.06, offset_exp - 0.06)
+        base_ymax = max(1.14, 1.08 + offset_exp)
         y_mid = 0.5 * (base_ymin + base_ymax) - pan_y_offset
         y_half = 0.5 * (base_ymax - base_ymin) / zoom_y_factor
         ax.set_ylim(y_mid - y_half, y_mid + y_half)
@@ -491,7 +500,6 @@ def simulate_rovibronic_spectrum(
         kappa_s0 = state_s0.kappa
         kappa_s1 = state_s1.kappa
 
-        # Count lines by type and branch
         n_a = sum(1 for ln in lines if ln.band_type == "a")
         n_b = sum(1 for ln in lines if ln.band_type == "b")
         n_c = sum(1 for ln in lines if ln.band_type == "c")
@@ -504,7 +512,10 @@ def simulate_rovibronic_spectrum(
             fontsize=11.0, fontweight="bold", pad=10
         )
         ax.set_xlabel("Desplazamiento de Frecuencia Relativa ν - ν₀ (GHz)", fontsize=10.5)
-        ax.set_ylabel("Intensidad Normalizada (u.a.)", fontsize=10.5)
+        ax.set_ylabel(
+            "Intensidad Normalizada (+Exp Arriba / -Sim Abajo)" if mirror_exp else "Intensidad Normalizada (u.a.)",
+            fontsize=10.0
+        )
         ax.grid(True, linestyle="--", alpha=0.35)
         ax.legend(loc="upper right", fontsize=8.2, framealpha=0.92)
         fig.tight_layout()
@@ -559,7 +570,7 @@ def handle_uploaded_exp_file(
                     new_band_mode = BAND_TYPE_CHOICES[0]
                 elif dom == "c":
                     new_band_mode = BAND_TYPE_CHOICES[2]
-            new_ham_mode = HAMILTONIAN_CHOICES[0]  # JB95 Rigid Rotor
+            new_ham_mode = HAMILTONIAN_CHOICES[0]
             if ds.extracted_constants is not None:
                 c = ds.extracted_constants
                 return (
@@ -580,6 +591,192 @@ def handle_uploaded_exp_file(
             band_type_mode, hamiltonian_model, EXP_SOURCE_CHOICES[0],
             f"❌ Error al leer archivo '{os.path.basename(up_path)}': {str(e)}"
         )
+
+
+def run_automatic_line_assignment_ui(
+    exp_file_choice,
+    uploaded_raw_file,
+    A0, B0, C0,
+    A1, B1, C1,
+    origin_mhz_in,
+    T_rot, fwhm_mhz, J_max,
+    band_mode_str, ham_mode_str,
+    tolerance_mhz, min_peak_pct, refine_chk
+):
+    """
+    Callback for Automatic Quantum Line Assignment (`A/B/C J' Ka' Kc' <- J'' Ka'' Kc''`)
+    from raw spectrometer scans (`PmtFla` or uploaded file) and `.asc` JB95 file export.
+    Plots:
+      - Top Panel (JCP Mirror Mode): Experimental `PmtFla` on TOP (+Y) with assigned peak markers
+        and quantum transition labels, and Simulated + Stick Spectrum inverted on BOTTOM (-Y).
+      - Bottom Panel: Residual errors (ν_exp - ν_calc in MHz) for all assigned lines.
+    """
+    plt.close("all")
+    try:
+        A0, B0, C0 = float(A0), float(B0), float(C0)
+        A1, B1, C1 = float(A1), float(B1), float(C1)
+        origin_mhz = float(origin_mhz_in)
+        T_rot = max(0.2, float(T_rot))
+        fwhm_mhz = max(2.0, float(fwhm_mhz))
+        J_max = max(4, min(int(J_max), 30))
+        tol_mhz = max(0.5, float(tolerance_mhz))
+        min_peak_h = max(0.01, float(min_peak_pct) / 100.0)
+
+        # Load experimental raw scan
+        if "Subido" in str(exp_file_choice) and uploaded_raw_file is not None:
+            up_path = uploaded_raw_file.name if hasattr(uploaded_raw_file, "name") else str(uploaded_raw_file)
+            exp_ds = parse_spectrometer_file(up_path, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
+        else:
+            exp_ds = parse_spectrometer_file(DEFAULT_PMTFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
+
+        is_rigid = "Rotor Rígido" in str(ham_mode_str)
+        dJ_val = 0.0 if is_rigid else 0.00025
+        sel_crit, dip, _ = _resolve_selection_criterion(band_mode_str, 0.0, 1.0, 0.0)
+        if sel_crit == "a":
+            dip = (1.0, 0.0, 0.0)
+        elif sel_crit == "c":
+            dip = (0.0, 0.0, 1.0)
+        else:
+            dip = (0.0, 1.0, 0.0)
+            sel_crit = "b"
+
+        s0 = MoleculeState("S0", A=A0, B=B0, C=C0, Delta_J=dJ_val)
+        s1 = MoleculeState("S1", A=A1, B=B1, C=C1, Delta_J=dJ_val, origin=origin_mhz * MHZ_TO_WAVENUMBER)
+
+        asg_res = auto_assign_spectrometer_lines(
+            exp_dataset=exp_ds,
+            ground_state=s0,
+            excited_state=s1,
+            origin_mhz=origin_mhz,
+            J_max=J_max,
+            temperature_K=T_rot,
+            dipole_fractions=dip,
+            selection_criterion=sel_crit,
+            tolerance_mhz=tol_mhz,
+            min_peak_height=min_peak_h,
+            min_jb95_intensity=0.010,
+            refine_constants=bool(refine_chk),
+            output_filename=f"Asignacion_{exp_ds.filename}_SpecWatson.asc"
+        )
+
+        # Build simulated continuous contour for the mirror plot
+        m0 = AsymmetricRotorHamiltonian(s0).compute_manifold(J_max)
+        m1 = AsymmetricRotorHamiltonian(s1).compute_manifold(J_max)
+        calc = RovibronicTransitionCalculator(
+            m0, m1, origin_mhz * MHZ_TO_WAVENUMBER, T_rot, dip, selection_criterion=sel_crit
+        )
+        sim_lines = calc.calculate_transitions(J_max, J_max)
+        sim = SpectrumSimulator(sim_lines, fwhm_mhz=fwhm_mhz, profile="voigt")
+        f_sim, y_sim = sim.simulate(
+            grid_points=len(exp_ds.freq_mhz),
+            freq_range_mhz=(float(exp_ds.freq_mhz[0]), float(exp_ds.freq_mhz[-1]))
+        )
+
+        rel_exp_ghz = (exp_ds.freq_mhz - origin_mhz) / 1000.0
+        rel_sim_ghz = (f_sim - origin_mhz) / 1000.0
+
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, figsize=(11.0, 6.2), dpi=135,
+            gridspec_kw={"height_ratios": [3.2, 1.2]}, sharex=True
+        )
+
+        # Top Panel: Experimental on TOP (+Y) and Simulated + Assigned Sticks on BOTTOM (-Y)
+        ax1.plot(
+            rel_exp_ghz, exp_ds.intensity_norm,
+            color="#ea580c", lw=1.25, alpha=0.92,
+            label=f"Experimental Espectrómetro '{exp_ds.filename}' (Arriba +Y)"
+        )
+        ax1.fill_between(rel_exp_ghz, 0.0, exp_ds.intensity_norm, color="#f97316", alpha=0.12)
+
+        ax1.plot(
+            rel_sim_ghz, -y_sim,
+            color="#1d4ed8", lw=1.35, alpha=0.90,
+            label=f"Simulado Cuántico [{('Rotor Rígido' if is_rigid else 'Watson')} · Tipo {sel_crit.upper()}] (Espejo Abajo -Y)"
+        )
+        ax1.fill_between(rel_sim_ghz, 0.0, -y_sim, color="#3b82f6", alpha=0.15)
+
+        # Plot assigned quantum sticks & peak markers
+        if asg_res.assigned_entries:
+            asg_f_ghz = np.array([(e.freq_calc_mhz - origin_mhz) / 1000.0 for e in asg_res.assigned_entries])
+            asg_obs_ghz = np.array([(e.freq_obs_mhz - origin_mhz) / 1000.0 for e in asg_res.assigned_entries])
+            asg_i_raw = np.array([e.intensity_jb95 for e in asg_res.assigned_entries])
+            max_i_asg = float(np.max(asg_i_raw)) if np.max(asg_i_raw) > 0 else 1.0
+            asg_i_norm = (asg_i_raw / max_i_asg) * 0.88
+
+            # Quantum stick lines pointing downwards in the simulated half (-Y)
+            ax1.vlines(
+                asg_f_ghz, 0.0, -asg_i_norm,
+                color="#059669", lw=0.85, alpha=0.75,
+                label=f"{len(asg_res.assigned_entries)} Líneas Cuánticas Asignadas ({sel_crit.upper()} J'Ka'Kc' ← J''Ka''Kc'')"
+            )
+
+            # Experimental peak markers on top (+Y)
+            obs_heights = np.interp(asg_obs_ghz, rel_exp_ghz, exp_ds.intensity_norm)
+            ax1.scatter(
+                asg_obs_ghz, obs_heights,
+                s=16, color="#10b981", edgecolors="#064e3b", linewidths=0.6, zorder=6,
+                label="Picos Experimentales Emparejados"
+            )
+
+            # Annotate up to 6 prominent well-separated assigned peaks with their quantum numbers
+            sorted_by_int = sorted(asg_res.assigned_entries, key=lambda x: x.intensity_jb95, reverse=True)
+            labeled_x = []
+            for entry in sorted_by_int:
+                x_ghz = (entry.freq_obs_mhz - origin_mhz) / 1000.0
+                if all(abs(x_ghz - lx) > 3.5 for lx in labeled_x) and len(labeled_x) < 6:
+                    labeled_x.append(x_ghz)
+                    y_val = float(np.interp(x_ghz, rel_exp_ghz, exp_ds.intensity_norm))
+                    q_lbl = f"{entry.band_type} {entry.J_up}({entry.Ka_up},{entry.Kc_up})←{entry.J_low}({entry.Ka_low},{entry.Kc_low})"
+                    ax1.annotate(
+                        q_lbl,
+                        xy=(x_ghz, y_val),
+                        xytext=(x_ghz, min(1.16, y_val + 0.14)),
+                        fontsize=7.2, fontweight="bold", color="#065f46", ha="center",
+                        arrowprops=dict(arrowstyle="->", color="#059669", lw=0.7)
+                    )
+
+        ax1.axhline(0.0, color="#1e293b", lw=1.0)
+        ax1.axvline(0.0, color="#ef4444", ls=":", lw=0.95, alpha=0.75, label="Origen de Banda ν₀")
+        ax1.set_ylim(-1.12, 1.24)
+        ax1.set_ylabel("Intensidad (+Exp Arriba / -Sim Abajo)", fontsize=9.8)
+        ax1.set_title(
+            f"Asignación Automática de Líneas Cuánticas (Formato JB95 .asc): {asg_res.assigned_count} Transiciones Asignadas (RMS = {asg_res.rms_residual_mhz:.2f} MHz)",
+            fontsize=10.8, fontweight="bold"
+        )
+        ax1.legend(loc="upper right", fontsize=8.0, framealpha=0.92)
+        ax1.grid(True, ls="--", alpha=0.35)
+
+        # Bottom Panel: Residuals (ν_exp - ν_calc in MHz)
+        if asg_res.assigned_entries:
+            res_x = np.array([(e.freq_calc_mhz - origin_mhz) / 1000.0 for e in asg_res.assigned_entries])
+            res_y = np.array([e.residual_mhz for e in asg_res.assigned_entries])
+            ax2.vlines(res_x, 0.0, res_y, color="#10b981", lw=0.9, alpha=0.7)
+            ax2.scatter(res_x, res_y, s=18, color="#059669", edgecolors="#064e3b", linewidths=0.5, zorder=4,
+                        label=f"Residual ν_exp - ν_calc (RMS = {asg_res.rms_residual_mhz:.2f} MHz)")
+            ax2.axhspan(-asg_res.rms_residual_mhz, asg_res.rms_residual_mhz, color="#10b981", alpha=0.12, label="Banda ±1 RMS")
+
+        ax2.axhline(0.0, color="#1e293b", lw=0.8, ls="--")
+        ax2.set_xlabel("Desplazamiento de Frecuencia Relativa ν - ν₀ (GHz)", fontsize=10.0)
+        ax2.set_ylabel("Residual (MHz)", fontsize=9.5)
+        ax2.set_ylim(-tol_mhz * 1.15, tol_mhz * 1.15)
+        ax2.legend(loc="upper right", fontsize=8.0)
+        ax2.grid(True, ls="--", alpha=0.35)
+
+        fig.tight_layout()
+
+        return (
+            fig,
+            asg_res.report_text,
+            asg_res.asc_preview_text,
+            asg_res.assigned_table_rows[:150],
+            asg_res.asc_file_path
+        )
+
+    except Exception as e:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.text(0.5, 0.5, f"Error en asignación automática: {str(e)}", ha="center", color="red")
+        ax.axis("off")
+        return fig, f"Error detallado: {repr(e)}", "", [], None
 
 
 def export_spectrum_high_dpi(
@@ -645,12 +842,12 @@ def export_spectrum_high_dpi(
 
 
 def reset_view_controls():
-    """Resets visibility, opacity, vertical offset, and zoom/pan controls to defaults."""
-    return False, True, True, False, 0.85, 0.85, 0.0, 1.0, 0.0, 1.0, 0.0
+    """Resets visibility, opacity, vertical offset, and zoom/pan controls to defaults (Mirror Mode ON)."""
+    return False, True, True, True, 0.85, 0.85, 0.0, 1.0, 0.0, 1.0, 0.0
 
 
 def run_autonomous_fit_demo(molecule_choice, fit_band_mode, fit_ham_mode, noise_pct, max_iter):
-    """Callback for Tab 2: Live Differential Evolution + Simplex Contour Fitting."""
+    """Callback for Tab 2B: Live Differential Evolution + Simplex Contour Fitting."""
     t0 = time.perf_counter()
     plt.close("all")
 
@@ -731,15 +928,19 @@ def run_autonomous_fit_demo(molecule_choice, fit_band_mode, fit_ham_mode, noise_
             gridspec_kw={"height_ratios": [3, 1]}, sharex=True
         )
 
-        ax1.plot(rel_f, y_exp, color="#1e293b", lw=1.2, alpha=0.85, label=f"Experimental ({p.get('ref', 'Literatura')[:28]} + {noise_pct}% ruido)")
-        ax1.plot(rel_f, y_init, color="#f59e0b", ls=":", lw=1.3, label=f"Semilla Inicial Ab Initio (A′={guess_A:.0f} MHz)")
-        ax1.plot(rel_f, y_fit, color="#ef4444", ls="--", lw=1.8, label=f"Ajuste Híbrido DE + Simplex (r = {corr_pct:.2f}%)")
-        ax1.set_ylabel("Intensidad Normalizada", fontsize=10)
+        # Mirror plot: Experimental on TOP (+Y) and Fitted Simulation on BOTTOM (-Y)
+        ax1.plot(rel_f, y_exp, color="#ea580c", lw=1.25, alpha=0.90, label=f"🟠 Experimental Arriba +Y ({p.get('ref', 'Literatura')[:24]} + {noise_pct}% ruido)")
+        ax1.fill_between(rel_f, 0.0, y_exp, color="#f97316", alpha=0.12)
+        ax1.plot(rel_f, -y_init, color="#f59e0b", ls=":", lw=1.3, label=f"Semilla Inicial Ab Initio Invertida (A′={guess_A:.0f} MHz)")
+        ax1.plot(rel_f, -y_fit, color="#1d4ed8", ls="-", lw=1.6, label=f"🔵 Ajuste Híbrido DE + Simplex Abajo -Y (r = {corr_pct:.2f}%)")
+        ax1.fill_between(rel_f, 0.0, -y_fit, color="#3b82f6", alpha=0.15)
+        ax1.axhline(0.0, color="#334155", lw=0.9)
+        ax1.set_ylabel("Intensidad (+Exp / -Sim)", fontsize=10)
         ax1.set_title(
-            f"Ajuste Evolutivo [{('Rotor Rígido' if is_rigid else 'Watson')} · Tipo {sel_crit.upper()}]: {molecule_choice}",
+            f"Ajuste Evolutivo en Modo Espejo [{('Rotor Rígido' if is_rigid else 'Watson')} · Tipo {sel_crit.upper()}]: {molecule_choice}",
             fontsize=10.8, fontweight="bold"
         )
-        ax1.legend(loc="upper right", fontsize=8.5)
+        ax1.legend(loc="upper right", fontsize=8.3)
         ax1.grid(True, ls="--", alpha=0.4)
 
         residual = y_exp - y_fit
@@ -790,7 +991,6 @@ def run_quantum_3d_tab(query_input, engine_choice, num_confs, s1_expansion):
         else:
             planarity_note = "Molécula NO PLANA / Con estructura 3D fuera del plano"
 
-        # Classify kappa
         k_val = res.kappa
         if k_val <= -0.95:
             k_desc = "Trompo Cuasi-Simétrico Prolato Extremo (tipo aguja/cigarro, A ≫ B ≈ C)"
@@ -801,7 +1001,6 @@ def run_quantum_3d_tab(query_input, engine_choice, num_confs, s1_expansion):
         else:
             k_desc = "Rotor Asimétrico Oblato (aplanado tipo disco, A ≈ B > C)"
 
-        # Classify dominant dipole axis
         fracs = {"a (Tipo a)": res.mu_a_frac, "b (Tipo b)": res.mu_b_frac, "c (Tipo c)": res.mu_c_frac}
         dom_axis = max(fracs, key=fracs.get)
 
@@ -815,7 +1014,7 @@ def run_quantum_3d_tab(query_input, engine_choice, num_confs, s1_expansion):
                     f"   • B₀ = C₀ Experimental: {lit['B0']:.2f} MHz  vs  Calculado 3D: {res.B0_mhz:.2f} MHz (Desviación: {err_b:.2f}%)"
                 )
             else:
-                err_b = abs(res.B0_mhz - float(lit["B0"])) / float(lit["B0"]) * 100.0
+                err_b = abs(res.B0_mhz - float(lit["B0"])) / float(lit["C0"]) * 100.0 if False else abs(res.B0_mhz - float(lit["B0"])) / float(lit["B0"]) * 100.0
                 err_c = abs(res.C0_mhz - float(lit["C0"])) / float(lit["C0"]) * 100.0
                 lit_block = (
                     f"\n📊 VALIDACIÓN CONTRA LITERATURA EXPERIMENTAL ({lit['ref']}):\n"
@@ -886,7 +1085,7 @@ def build_gradio_app():
             # 🔬 SpecWatson: Suite de Espectroscopía Rovibrónica & Química Cuántica en GPU
             **Universidad de Guanajuato · División de Ciencias e Ingenierías (Campus León)**  
             **Autor:** Miguel Díaz (Maestría en Ciencias) · **Dirección y Respaldo Científico:** Dr. Leonardo Álvarez-Valtierra & Dr. Alejandro Gil-Villegas (SNII Nivel III)  
-            *Simulación cuántica por Rotor Rígido y Hamiltoniano de Watson (Base de Wang), Reglas de Selección Tipo a/b/c, Lectura directa de archivos del espectrómetro (`PmtFla`, `.asc`) y Química Cuántica 3D.*
+            *Simulación cuántica por Rotor Rígido y Hamiltoniano de Watson (Base de Wang), Reglas de Selección Tipo a/b/c, Asignación Automática de Líneas Cuánticas (`.asc` estilo JB95) desde datos crudos del espectrómetro (`PmtFla`) y Química Cuántica 3D.*
             """
         )
 
@@ -913,8 +1112,8 @@ def build_gradio_app():
                         scale=1
                     )
                     mirror_exp_chk = gr.Checkbox(
-                        value=False,
-                        label="🪞 Modo Espejo JCP (Invertir Abajo)",
+                        value=True,
+                        label="🪞 Modo Espejo JCP (Exp Arriba +Y / Sim Abajo -Y)",
                         scale=1
                     )
 
@@ -992,9 +1191,10 @@ def build_gradio_app():
                             )
 
                         btn_sim = gr.Button("⚡ Simular y Comparar Espectro Cuántico", variant="primary", size="lg")
+                        btn_goto_assign = gr.Button("🎯 Ir a Asignación Automática de Líneas (.asc / JB95) desde PmtFla →", variant="secondary")
 
                     with gr.Column(scale=2):
-                        plot_out = gr.Plot(label="Espectro Simulado vs. Datos Experimentales del Espectrómetro")
+                        plot_out = gr.Plot(label="Espectro Experimental (Arriba +Y) vs. Simulado SpecWatson (Abajo -Y)")
 
                         with gr.Accordion("🎛️ Controles de Visualización: Sub-bandas (a/b/c), Opacidad, Offset, Zoom y Exportación (300/600 DPI)", open=True):
                             with gr.Row():
@@ -1042,8 +1242,8 @@ def build_gradio_app():
                                   * **Banda Híbrida:** Cuando la molécula carece de simetría alta (ej. 1-Naftol, Indol, Resveratrol), el dipolo apunta en diagonal entre los ejes y el espectro es una suma ponderada $\mu_a^2 I_a + \mu_b^2 I_b + \mu_c^2 I_c$.
                                 * **2. ¿Qué es el Factor $\kappa$ (Parámetro de Asimetría de Ray)?**  
                                   Definido como $\kappa = \frac{2B - A - C}{A - C}$, mide la forma geométrica del rotor entre **$-1$ y $+1$**:
-                                  * **$\kappa = -1$:** Trompo simétrico **prolato** (forma alargada de cigarro: $A > B = C$). El Carbazol tiene $\kappa = -0.8608$ (rotor asimétrico casi prolato).
-                                  * **$\kappa = 0$:** Rotor de máxima asimetría ($B$ exactamente a la mitad entre $A$ y $C$).
+                                  * **$\kappa = -1$:** Trompo simétrico **prolato** (forma alargada de cigarro: $A > B = C$). El Carbazol tiene $\kappa = -0.8611$ (rotor asimétrico casi prolato).
+                                  * **$\kappa = 0$:** Rotor de máxima asimetría ($B$ está exactamente a la mitad entre $A$ y $C$).
                                   * **$\kappa = +1$:** Trompo simétrico **oblato** (forma de moneda/disco: $A = B > C$).
                                 * **3. ¿Qué diferencia hay entre "Rotor Rígido Puro" y "Hamiltoniano de Watson"?**  
                                   * **Rotor Rígido Puro:** Considera la molécula como una estructura indeformable caracterizada únicamente por $(A, B, C)$ con constantes de distorsión iguales a cero ($\Delta_J = \Delta_{JK} = \Delta_K = \delta_J = \delta_K = 0$). A las bajas temperaturas del jet supersónico ($T_{\text{rot}} \approx 2 - 4\text{ K}$, $J \le 25$), la fuerza centrífuga es despreciable, por lo que programas clásicos como **JB95** resuelven el Carbazol con el modelo de Rotor Rígido.
@@ -1052,13 +1252,97 @@ def build_gradio_app():
                             )
 
             # =========================================================================
-            # TAB 2: AJUSTE AUTÓNOMO POR EVOLUCIÓN DIFERENCIAL
+            # TAB 2: ASIGNACIÓN AUTOMÁTICA DE LÍNEAS (.asc / JB95) & AJUSTE EVOLUTIVO
             # =========================================================================
-            with gr.TabItem("🧬 2. Ajuste Autónomo de Contorno (Evolución Diferencial)", id="tab_fit"):
+            with gr.TabItem("🎯 2. Asignación Automática de Líneas (.asc / JB95) & Ajuste Evolutivo", id="tab_fit"):
+                gr.Markdown(
+                    r"""
+                    ### A. Asignador Automático de Líneas Cuánticas (`A`, `B`, `C` $J' K_a' K_c' \leftarrow J'' K_a'' K_c''$) desde Espectrómetro Crudo (`PmtFla`)
+                    En programas clásicos como **JB95**, el usuario debía hacer clic manualmente pico por pico sobre el archivo crudo `PmtFla` para asignarle sus números cuánticos y generar el archivo `.asc` (`IAR.asc`).  
+                    Aquí **SpecWatson** detecta automáticamente los máximos experimentales con interpolación parabólica sub-MHz, los empareja con las transiciones cuánticas teóricas (`B J' Ka' Kc' ← J'' Ka'' Kc''`), calcula el error residual ($\nu_{\text{exp}} - \nu_{\text{calc}}$) y **genera el archivo `.asc` completo listo para descargar**.
+                    """
+                )
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        asg_source_dropdown = gr.Dropdown(
+                            choices=[
+                                "📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
+                                "📤 Usar Archivo Experimental Crudo Subido Abajo (.dat, PmtFla, .csv)"
+                            ],
+                            value="📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
+                            label="1. Archivo Experimental Crudo a Asignar"
+                        )
+                        asg_raw_upload = gr.File(
+                            label="Opcional: Subir otro archivo crudo del espectrómetro (PmtFla, .dat, .csv)",
+                            file_count="single"
+                        )
+                        with gr.Row():
+                            asg_a0 = gr.Number(value=2253.2409, label="A″ Basal (MHz)")
+                            asg_b0 = gr.Number(value=594.2103, label="B″ Basal (MHz)")
+                            asg_c0 = gr.Number(value=470.3670, label="C″ Basal (MHz)")
+                        with gr.Row():
+                            asg_a1 = gr.Number(value=2250.6104, label="A′ Excitado (MHz)")
+                            asg_b1 = gr.Number(value=586.3482, label="B′ Excitado (MHz)")
+                            asg_c1 = gr.Number(value=465.2923, label="C′ Excitado (MHz)")
+
+                        asg_origin = gr.Number(value=923604613.0295, label="Origen de Banda ν₀ (MHz) [Ej. 923604613.03 MHz]")
+
+                        with gr.Row():
+                            asg_band_mode = gr.Dropdown(
+                                choices=BAND_TYPE_CHOICES[:3],
+                                value=BAND_TYPE_CHOICES[0],
+                                label="Criterio de Selección (Letra en .asc: B, A o C)"
+                            )
+                            asg_ham_mode = gr.Dropdown(
+                                choices=HAMILTONIAN_CHOICES,
+                                value=HAMILTONIAN_CHOICES[0],
+                                label="Modelo Hamiltoniano"
+                            )
+
+                        with gr.Row():
+                            asg_trot = gr.Slider(0.5, 12.0, value=2.6, step=0.1, label="T_rot (K)")
+                            asg_fwhm = gr.Slider(5.0, 80.0, value=45.0, step=1.0, label="FWHM (MHz)")
+                            asg_jmax = gr.Slider(6, 30, value=26, step=1, label="J Máximo")
+
+                        with gr.Row():
+                            asg_tol = gr.Slider(1.0, 20.0, value=5.5, step=0.5, label="Tolerancia de Asignación |ν_exp - ν_calc| (MHz)")
+                            asg_min_pk = gr.Slider(2.0, 25.0, value=6.0, step=1.0, label="Altura Mín. de Pico Exp (%)")
+
+                        asg_refine_chk = gr.Checkbox(
+                            value=False,
+                            label="🔧 Refinar (A′, B′, C′, ν₀) por Mínimos Cuadrados usando las líneas asignadas"
+                        )
+                        btn_run_assign = gr.Button(
+                            "🎯 Asignar Líneas Cuánticas Automáticamente y Generar Archivo .asc (JB95)",
+                            variant="primary",
+                            size="lg"
+                        )
+                        asg_file_out = gr.File(
+                            label="📥 Descargar Archivo .asc Generado (Formato Exacto IAR.asc / JB95)"
+                        )
+
+                    with gr.Column(scale=2):
+                        asg_plot_out = gr.Plot(
+                            label="Vista Espejo JCP (Experimental Arriba +Y / Simulado y Líneas Stick Asignadas Abajo -Y) + Residuales"
+                        )
+                        asg_report_out = gr.Textbox(
+                            label="Resumen Estadístico de la Asignación Cuántica Automática",
+                            lines=6
+                        )
+                        asg_preview_out = gr.Textbox(
+                            label="Vista Previa del Archivo .asc Generado (Formato Exacto JB95: Tipo J' Ka' Kc' J'' Ka'' Kc'' Int Freq_Exp Freq_Calc Residual)",
+                            lines=9
+                        )
+                        asg_table_out = gr.Dataframe(
+                            headers=["Tipo", "Nivel Sup (J' Ka' Kc')", "Nivel Inf (J'' Ka'' Kc'')", "Rama", "Int (JB95)", "Freq Exp (MHz)", "Freq Calc (MHz)", "Residual (MHz)"],
+                            label="Tabla Interactiva de Transiciones Cuánticas Asignadas"
+                        )
+
                 gr.Markdown(
                     """
-                    ### Motor de Problema Inverso sin Asignación Manual
-                    El algoritmo híbrido de **Evolución Diferencial + Simplex** deduce las constantes del estado excitado $(A', B', C')$ partiendo de valores iniciales erróneos, permitiendo elegir el **Modelo Hamiltoniano (Rotor Rígido vs. Watson)** y el **Criterio de Selección (Tipo a, b, c o Híbrido)**.
+                    ---
+                    ### B. Ajuste Autónomo de Contorno por Evolución Diferencial (Sin Asignación de Líneas)
+                    Prueba cómo el algoritmo híbrido de **Evolución Diferencial + Simplex** deduce las constantes del estado excitado $(A', B', C')$ partiendo de valores iniciales erróneos sobre el contorno completo.
                     """
                 )
                 with gr.Row():
@@ -1080,11 +1364,11 @@ def build_gradio_app():
                         )
                         fit_noise = gr.Slider(0.5, 10.0, value=3.0, step=0.5, label="Ruido Experimental Gaussiano (%)")
                         fit_iter = gr.Slider(5, 30, value=12, step=1, label="Generaciones Evolutivas (Iteraciones)")
-                        btn_fit = gr.Button("🚀 Ejecutar Ajuste Evolutivo Autónomo", variant="primary", size="lg")
+                        btn_fit = gr.Button("🚀 Ejecutar Ajuste Evolutivo de Contorno", variant="primary", size="lg")
 
                     with gr.Column(scale=2):
-                        fit_plot_out = gr.Plot(label="Convergencia del Contorno y Espectro de Residuales")
-                        fit_report_out = gr.Textbox(label="Parámetros Moleculares Recuperados vs. Referencia Experimental", lines=8)
+                        fit_plot_out = gr.Plot(label="Convergencia del Contorno en Modo Espejo y Espectro de Residuales")
+                        fit_report_out = gr.Textbox(label="Parámetros Moleculares Recuperados vs. Referencia Experimental", lines=7)
 
             # =========================================================================
             # TAB 3: QUÍMICA CUÁNTICA 3D & DIBUJO MOLECULAR (TENSOR DE INERCIA -> A,B,C)
@@ -1133,7 +1417,6 @@ def build_gradio_app():
                         q_3d_out = gr.HTML(label="Visor Molecular 3D Interactivo (WebGL) con Ejes Principales a, b, c y Dipolo μ")
                         q_report_out = gr.Textbox(label="Reporte del Tensor de Inercia, Factor κ, Dipolo μ y Validación Experimental", lines=10)
 
-                        # Hidden state boxes holding the computed constants so they can be transferred to Tab 1
                         with gr.Row(visible=False):
                             calc_a0 = gr.Number(value=2253.24)
                             calc_b0 = gr.Number(value=594.21)
@@ -1245,7 +1528,35 @@ def build_gradio_app():
             outputs=[plot_out, stats_out]
         )
 
+        # Jump from Tab 1 to Tab 2 Automatic Line Assigner and run assignment
+        asg_inputs = [
+            asg_source_dropdown, asg_raw_upload,
+            asg_a0, asg_b0, asg_c0,
+            asg_a1, asg_b1, asg_c1,
+            asg_origin,
+            asg_trot, asg_fwhm, asg_jmax,
+            asg_band_mode, asg_ham_mode,
+            asg_tol, asg_min_pk, asg_refine_chk
+        ]
+        asg_outputs = [asg_plot_out, asg_report_out, asg_preview_out, asg_table_out, asg_file_out]
+
+        btn_goto_assign.click(
+            fn=lambda x0, y0, z0, x1, y1, z1: (x0, y0, z0, x1, y1, z1, gr.Tabs(selected="tab_fit")),
+            inputs=[a0, b0, c0, a1, b1, c1],
+            outputs=[asg_a0, asg_b0, asg_c0, asg_a1, asg_b1, asg_c1, main_tabs]
+        ).then(
+            fn=run_automatic_line_assignment_ui,
+            inputs=asg_inputs,
+            outputs=asg_outputs
+        )
+
         # Callbacks for Tab 2
+        btn_run_assign.click(
+            fn=run_automatic_line_assignment_ui,
+            inputs=asg_inputs,
+            outputs=asg_outputs
+        )
+
         btn_fit.click(
             fn=run_autonomous_fit_demo,
             inputs=[fit_mol, fit_band_dropdown, fit_ham_dropdown, fit_noise, fit_iter],
@@ -1276,7 +1587,6 @@ def build_gradio_app():
             outputs=qchem_outputs
         )
 
-        # Transfer calculated (A, B, C, mu) from Tab 3 directly to Tab 1 and select matching band type!
         def transfer_to_tab1(ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc):
             if cmub >= 0.90:
                 bmode = BAND_TYPE_CHOICES[0]
@@ -1298,11 +1608,15 @@ def build_gradio_app():
             outputs=[plot_out, stats_out]
         )
 
-        # Run initial simulations on page load
+        # Run initial simulations on page load (Tab 1, Tab 2 Auto-Assigner, and Tab 3)
         demo.load(
             fn=simulate_rovibronic_spectrum,
             inputs=all_sim_inputs,
             outputs=[plot_out, stats_out]
+        ).then(
+            fn=run_automatic_line_assignment_ui,
+            inputs=asg_inputs,
+            outputs=asg_outputs
         ).then(
             fn=run_quantum_3d_tab,
             inputs=[q_input, q_engine, q_confs, q_s1_exp],
