@@ -13,6 +13,7 @@ from .hamiltonian import MoleculeState, AsymmetricRotorHamiltonian
 from .transitions import RovibronicTransitionCalculator
 from .spectrum import SpectrumSimulator
 from .fitting import ContourFitter
+from .io_parsers import parse_spectrometer_file, ExperimentalDataset
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __author__ = "Miguel Diaz / Molecular Spectroscopy Lab (UGto)"

@@ -2,10 +2,13 @@
 SpecWatson Interactive Web GUI (Gradio)
 =======================================
 Cloud / Local Interactive Interface for High-Resolution Rovibronic Spectroscopy:
-  1. Direct Quantum Spectrum Simulator (Watson A-Reduced Hamiltonian + Wang Factorization)
-     with Live Experimental Reference Overlay (HITRAN / JPL / Pratt Group Literature)
-  2. Autonomous Contour Fitter (Differential Evolution + Nelder-Mead Simplex)
-  3. 3D Quantum Chemistry & Molecular Sketcher (RDKit / TorchANI GPU / GPU4PySCF -> Inertia Tensor -> A, B, C)
+  1. Direct Quantum Spectrum Simulator:
+     - Selectable Hamiltonian Model: Pure Rigid Rotor (JB95 standard) vs. Watson A-Reduction Centrifugal Distortion
+     - Selectable Spectral Selection Rules: Pure Type a, Pure Type b, Pure Type c, or Hybrid (a + b + c) with sub-band decomposition
+     - Native Spectrometer File Loader: Reads raw fluorescence scans (`PmtFla`, `.dat`, `.txt`, `.csv`) and JB95 line lists (`IAR.asc`, `.asc`)
+     - Interactive Visibility, Mirror Mode, Opacity, X/Y Zoom & Pan, and 300/600 DPI Publication Export
+  2. Autonomous Contour Fitter (Differential Evolution + Nelder-Mead Simplex) on Real Spectrometer Data (`PmtFla` / `.asc`)
+  3. 3D Quantum Chemistry & Molecular Sketcher (RDKit / TorchANI GPU / GPU4PySCF -> Inertia Tensor -> A, B, C, κ, μ)
 
 Author: Miguel Díaz (Maestría en Ciencias - DCI, Universidad de Guanajuato)
 Academic Advisors & Support: Dr. Leonardo Álvarez-Valtierra & Dr. Alejandro Gil-Villegas (SNII Nivel III)
@@ -20,9 +23,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from specwatson.hamiltonian import MoleculeState, AsymmetricRotorHamiltonian
-from specwatson.transitions import RovibronicTransitionCalculator
+from specwatson.transitions import RovibronicTransitionCalculator, WAVENUMBER_TO_MHZ, MHZ_TO_WAVENUMBER
 from specwatson.spectrum import SpectrumSimulator
 from specwatson.fitting import ContourFitter
+from specwatson.io_parsers import parse_spectrometer_file
 from specwatson.quantum_chem import (
     MOLECULE_CATALOG,
     EXPERIMENTAL_LITERATURE_DB,
@@ -32,105 +36,210 @@ from specwatson.quantum_chem import (
     render_jsme_sketcher_html,
 )
 
+# Paths to real experimental resources shared from Dr. Leonardo's spectrometer & JB95
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_PMTFLA_PATH = os.path.join(BASE_DIR, "recursos", "PmtFla")
+DEFAULT_IAR_ASC_PATH = os.path.join(BASE_DIR, "recursos", "IAR.asc")
+
+# Selection Rule Mode choices
+BAND_TYPE_CHOICES = [
+    "Tipo b Puro (ΔKa = impar, ΔKc = impar | Ej. Carbazol, Fenol, H₂O)",
+    "Tipo a Puro (ΔKa = par, ΔKc = impar | Ej. Fluoreno, H₂CO, CO₂)",
+    "Tipo c Puro (ΔKa = impar, ΔKc = par | Dipolo fuera del plano c)",
+    "Banda Híbrida (Mezcla a + b + c controlada por pesos μₐ², μ_b², μ_c²)",
+]
+
+# Hamiltonian Model choices
+HAMILTONIAN_CHOICES = [
+    "Rotor Rígido Puro (3 constantes: A, B, C | ΔJ = ΔJK = ΔK = δJ = δK = 0 — Método JB95 / Carbazol)",
+    "Hamiltoniano de Watson Reducción A (Rotor Rígido + Distorsión Centrífuga Cuártica)",
+]
+
+# Experimental Reference Source choices
+EXP_SOURCE_CHOICES = [
+    "📡 Espectrómetro Real: PmtFla (Fluorescencia LIF Carbazol - Dr. Leonardo)",
+    "📄 Ajuste JB95 Real: IAR.asc (2,705 líneas Tipo B Carbazol - Dr. Leonardo)",
+    "📚 Referencia de Literatura del Sistema Molecular Seleccionado",
+    "📤 Archivo Propio Subido (.asc, PmtFla, .dat, .txt, .csv)",
+]
+
 # Pre-configured molecular presets for Tab 1 (Aromatics + Simple HITRAN/JPL Standards)
 PRESETS = {
-    "Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)": {
-        "A0": 2178.60, "B0": 1251.20, "C0": 794.50,
-        "A1": 2145.30, "B1": 1242.10, "C1": 788.90,
-        "Trot": 3.5, "fwhm": 25.0,
-        "mu_a": 1.0, "mu_b": 0.0, "mu_c": 0.0,
-        "Jmax": 12,
-        "ref": "Álvarez-Valtierra & Pratt, J. Chem. Phys. 124 (2006)"
+    "Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)": {
+        "A0": 2253.2409, "B0": 594.2103, "C0": 470.3670,
+        "A1": 2250.6104, "B1": 586.3482, "C1": 465.2923,
+        "origin_mhz": 923604613.0295,
+        "Trot": 2.6, "fwhm": 45.0,
+        "mu_a": 0.0, "mu_b": 1.0, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[0],       # Tipo b Puro
+        "ham_mode": HAMILTONIAN_CHOICES[0],      # Rotor Rígido Puro
+        "exp_source": EXP_SOURCE_CHOICES[0],     # PmtFla real
+        "Jmax": 22,
+        "ref": "Álvarez-Valtierra & Pratt, J. Chem. Phys. 125, 244309 (2006) | Datos Espectrómetro PmtFla / IAR.asc"
     },
     "trans-Resveratrol (Polifenol - Confórmero I Plano)": {
         "A0": 1684.50, "B0": 218.40, "C0": 193.35,
         "A1": 1652.10, "B1": 216.85, "C1": 191.80,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 3.0, "fwhm": 18.0,
         "mu_a": 0.82, "mu_b": 0.18, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[3],       # Híbrida a/b
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 14,
         "ref": "Estudio DFT/Watson Confórmero I Planar (DCI-UG)"
     },
     "trans-Resveratrol (Polifenol - Confórmero II Torsional)": {
         "A0": 1592.30, "B0": 229.15, "C0": 204.80,
         "A1": 1564.80, "B1": 227.40, "C1": 203.10,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 3.0, "fwhm": 18.0,
         "mu_a": 0.65, "mu_b": 0.25, "mu_c": 0.10,
+        "band_mode": BAND_TYPE_CHOICES[3],
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 14,
         "ref": "Estudio DFT/Watson Confórmero II No-Planar (DCI-UG)"
     },
     "Indol (Cromóforo del Triptófano | Caminati & Pratt)": {
         "A0": 3877.80, "B0": 1636.00, "C0": 1150.90,
         "A1": 3743.00, "B1": 1616.00, "C1": 1129.00,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 3.5, "fwhm": 22.0,
         "mu_a": 0.62, "mu_b": 0.38, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[3],
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 12,
         "ref": "Berden, Meerts & Pratt, Chem. Phys. Lett. (1994)"
     },
     "1-Naftol (Banda Híbrida a/b | Johnson & Pratt 1990)": {
         "A0": 1948.50, "B0": 1132.40, "C0": 716.20,
         "A1": 1912.10, "B1": 1118.80, "C1": 706.50,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 4.0, "fwhm": 22.0,
         "mu_a": 0.60, "mu_b": 0.40, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[3],
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 12,
         "ref": "Johnson & Pratt, J. Chem. Phys. 93 (1990)"
     },
-    "Fenol (Prototipo Aromático | Schmitt & Pratt)": {
+    "Fenol (Prototipo Aromático Tipo b | Schmitt & Pratt)": {
         "A0": 5650.52, "B0": 2619.20, "C0": 1789.84,
         "A1": 5313.40, "B1": 2581.50, "C1": 1737.60,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 3.0, "fwhm": 25.0,
         "mu_a": 0.0, "mu_b": 1.0, "mu_c": 0.0,
-        "Jmax": 11,
+        "band_mode": BAND_TYPE_CHOICES[0],       # Tipo b Puro
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
+        "Jmax": 12,
         "ref": "Schmitt, Ratzer & Pratt, J. Chem. Phys. (1998)"
     },
-    "Benzonitrilo (Estándar Dipolar | Wohlfart / JPL)": {
+    "Benzonitrilo (Estándar Dipolar Tipo b | Wohlfart / JPL)": {
         "A0": 5655.26, "B0": 1546.88, "C0": 1214.40,
         "A1": 5456.00, "B1": 1516.00, "C1": 1186.00,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 3.0, "fwhm": 20.0,
         "mu_a": 0.0, "mu_b": 1.0, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[0],
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 12,
         "ref": "Wohlfart et al., J. Mol. Spectrosc. 247 (2008)"
     },
     "Anisol (Metoxibenceno | Álvarez-Valtierra & Pratt)": {
         "A0": 5028.85, "B0": 1569.36, "C0": 1207.72,
         "A1": 4845.10, "B1": 1548.20, "C1": 1186.40,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 3.5, "fwhm": 22.0,
         "mu_a": 0.25, "mu_b": 0.75, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[3],
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 12,
         "ref": "Álvarez-Valtierra & Pratt (Supersonic Jet LIF)"
     },
-    "Dióxido de Azufre (SO₂ - Estándar Triatómico | JPL / NIST)": {
+    "Dióxido de Azufre (SO₂ - Estándar Triatómico Tipo b | JPL / NIST)": {
         "A0": 60778.55, "B0": 10318.07, "C0": 8799.70,
         "A1": 59850.00, "B1": 10265.00, "C1": 8750.00,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 6.0, "fwhm": 45.0,
         "mu_a": 0.0, "mu_b": 1.0, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[0],
+        "ham_mode": HAMILTONIAN_CHOICES[1],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 8,
         "ref": "Catálogo JPL / NIST (Lovas 1985)"
     },
-    "Formaldehído (H₂CO - Cuasi-Simétrico | HITRAN / JPL)": {
+    "Formaldehído (H₂CO - Cuasi-Simétrico Tipo a | HITRAN / JPL)": {
         "A0": 281970.56, "B0": 38836.05, "C0": 34002.20,
         "A1": 262600.00, "B1": 33760.00, "C1": 30450.00,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 8.0, "fwhm": 50.0,
         "mu_a": 1.0, "mu_b": 0.0, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[1],       # Tipo a Puro
+        "ham_mode": HAMILTONIAN_CHOICES[1],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 7,
         "ref": "HITRAN / JPL (Bocquet et al. 1996)"
     },
-    "Agua (H₂O - Rotor Asimétrico Ligero | HITRAN / JPL)": {
+    "Agua (H₂O - Rotor Asimétrico Ligero Tipo b | HITRAN / JPL)": {
         "A0": 835840.29, "B0": 435347.85, "C0": 278138.70,
         "A1": 820500.00, "B1": 430100.00, "C1": 274500.00,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 10.0, "fwhm": 50.0,
         "mu_a": 0.0, "mu_b": 1.0, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[0],
+        "ham_mode": HAMILTONIAN_CHOICES[1],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 5,
         "ref": "HITRAN2020 / JPL (Matsushima et al.)"
     },
-    "Dióxido de Carbono (CO₂ - Rotor Lineal D∞h | HITRAN)": {
+    "Dióxido de Carbono (CO₂ - Rotor Lineal D∞h Tipo a | HITRAN)": {
         "A0": 58492.35, "B0": 11698.47, "C0": 11698.47,
         "A1": 58030.50, "B1": 11606.10, "C1": 11606.10,
+        "origin_mhz": 30000.0 * WAVENUMBER_TO_MHZ,
         "Trot": 8.0, "fwhm": 40.0,
         "mu_a": 1.0, "mu_b": 0.0, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[1],
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
         "Jmax": 10,
         "ref": "HITRAN2020 (Gordon et al. 2022) — Ramas P y R Lineales (2B = 23.4 GHz)"
     },
 }
+
+
+def _resolve_selection_criterion(band_mode_str: str, mu_a: float, mu_b: float, mu_c: float):
+    """Maps UI band_mode selection to ('a' | 'b' | 'c' | 'hybrid') and normalized dipole weights."""
+    bm = str(band_mode_str)
+    if "Tipo a Puro" in bm:
+        return "a", (1.0, 0.0, 0.0), "Tipo a Puro (ΔKa = 0, ±2 [par], ΔKc = ±1, ±3 [impar] | Dipolo en Eje a)"
+    if "Tipo b Puro" in bm:
+        return "b", (0.0, 1.0, 0.0), "Tipo b Puro (ΔKa = ±1, ±3 [impar], ΔKc = ±1, ±3 [impar] | Dipolo en Eje b)"
+    if "Tipo c Puro" in bm:
+        return "c", (0.0, 0.0, 1.0), "Tipo c Puro (ΔKa = ±1, ±3 [impar], ΔKc = 0, ±2 [par] | Dipolo fuera del plano Eje c)"
+
+    s = float(mu_a) + float(mu_b) + float(mu_c)
+    if s <= 1e-6:
+        dip = (0.0, 1.0, 0.0)
+    else:
+        dip = (float(mu_a) / s, float(mu_b) / s, float(mu_c) / s)
+    return "hybrid", dip, f"Banda Híbrida (Mezcla a+b+c: μₐ²={dip[0]:.2f}, μ_b²={dip[1]:.2f}, μ_c²={dip[2]:.2f})"
+
+
+def on_band_mode_change(band_mode_str):
+    """Automatically sets dipole sliders when a Pure Band Type (a, b, or c) is chosen."""
+    bm = str(band_mode_str)
+    if "Tipo a Puro" in bm:
+        return 1.0, 0.0, 0.0
+    if "Tipo b Puro" in bm:
+        return 0.0, 1.0, 0.0
+    if "Tipo c Puro" in bm:
+        return 0.0, 0.0, 1.0
+    return 0.60, 0.40, 0.0
 
 
 def simulate_rovibronic_spectrum(
@@ -139,7 +248,13 @@ def simulate_rovibronic_spectrum(
     T_rot, fwhm_mhz,
     mu_a, mu_b, mu_c,
     J_max,
-    preset_name="Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)",
+    preset_name="Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)",
+    band_type_mode=BAND_TYPE_CHOICES[0],
+    hamiltonian_model=HAMILTONIAN_CHOICES[0],
+    dJ_khz=0.25, dJK_khz=-0.60, dK_khz=1.20, delJ_khz=0.04, delK_khz=0.30,
+    exp_source_mode=EXP_SOURCE_CHOICES[0],
+    uploaded_exp_file=None,
+    show_subbands=False,
     show_sim=True,
     overlay_exp=True,
     mirror_exp=False,
@@ -152,7 +267,7 @@ def simulate_rovibronic_spectrum(
     pan_y_offset=0.0,
     render_dpi=130
 ):
-    """Callback for Tab 1: Direct Quantum Spectrum Simulation + Interactive Visibility, Opacity, Zoom & Pan."""
+    """Callback for Tab 1: Direct Quantum Spectrum Simulation + Real Spectrometer Overlay (`PmtFla` / `IAR.asc`)."""
     t0 = time.perf_counter()
     plt.close("all")
 
@@ -161,7 +276,7 @@ def simulate_rovibronic_spectrum(
         A1, B1, C1 = float(A1), float(B1), float(C1)
         T_rot = max(0.2, float(T_rot))
         fwhm_mhz = max(2.0, float(fwhm_mhz))
-        J_max = max(2, min(int(J_max), 25))
+        J_max = max(2, min(int(J_max), 28))
         alpha_sim = float(np.clip(alpha_sim, 0.05, 1.0))
         alpha_exp = float(np.clip(alpha_exp, 0.05, 1.0))
         offset_exp = float(offset_exp)
@@ -180,14 +295,33 @@ def simulate_rovibronic_spectrum(
             ax.axis("off")
             return fig, "Error de validación física: verifica que A ≥ B ≥ C > 0 MHz."
 
+        # 1. Configure Hamiltonian Model: Pure Rigid Rotor vs. Watson A-Reduction
+        is_rigid = "Rotor Rígido" in str(hamiltonian_model)
+        if is_rigid:
+            dJ_mhz = dJK_mhz = dK_mhz = delJ_mhz = delK_mhz = 0.0
+            ham_short_label = "Rotor Rígido Puro"
+        else:
+            dJ_mhz = float(dJ_khz) * 1e-3
+            dJK_mhz = float(dJK_khz) * 1e-3
+            dK_mhz = float(dK_khz) * 1e-3
+            delJ_mhz = float(delJ_khz) * 1e-3
+            delK_mhz = float(delK_khz) * 1e-3
+            ham_short_label = "Watson Reducción A"
+
+        p_ref = PRESETS.get(preset_name, PRESETS["Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)"])
+        origin_mhz = float(p_ref.get("origin_mhz", 30000.0 * WAVENUMBER_TO_MHZ))
+        origin_cm1 = origin_mhz * MHZ_TO_WAVENUMBER
+
         state_s0 = MoleculeState(
             name="S0", A=A0, B=B0, C=C0,
-            Delta_J=0.00025, Delta_JK=-0.00060, Delta_K=0.00120
+            Delta_J=dJ_mhz, Delta_JK=dJK_mhz, Delta_K=dK_mhz,
+            delta_J=delJ_mhz, delta_K=delK_mhz
         )
         state_s1 = MoleculeState(
             name="S1", A=A1, B=B1, C=C1,
-            Delta_J=0.00024, Delta_JK=-0.00058, Delta_K=0.00115,
-            origin=30000.0
+            Delta_J=dJ_mhz * 0.96, Delta_JK=dJK_mhz * 0.96, Delta_K=dK_mhz * 0.96,
+            delta_J=delJ_mhz * 0.96, delta_K=delK_mhz * 0.96,
+            origin=origin_cm1
         )
 
         ham_s0 = AsymmetricRotorHamiltonian(state_s0)
@@ -196,79 +330,135 @@ def simulate_rovibronic_spectrum(
         manifold_s0 = ham_s0.compute_manifold(J_max=J_max)
         manifold_s1 = ham_s1.compute_manifold(J_max=J_max)
 
-        dip_sum = float(mu_a) + float(mu_b) + float(mu_c)
-        if dip_sum <= 1e-6:
-            dip = (1.0, 0.0, 0.0)
-        else:
-            dip = (float(mu_a) / dip_sum, float(mu_b) / dip_sum, float(mu_c) / dip_sum)
+        # 2. Selection Rule Criterion (Pure a, Pure b, Pure c, or Hybrid)
+        sel_crit, dip, sel_desc = _resolve_selection_criterion(band_type_mode, mu_a, mu_b, mu_c)
 
         calc = RovibronicTransitionCalculator(
             ground_manifold=manifold_s0,
             excited_manifold=manifold_s1,
-            band_origin_cm1=30000.0,
+            band_origin_cm1=origin_cm1,
             temperature_K=T_rot,
-            dipole_fractions=dip
+            dipole_fractions=dip,
+            selection_criterion=sel_crit
         )
         lines = calc.calculate_transitions(J_max_ground=J_max, J_max_excited=J_max)
 
+        # 3. Determine frequency grid and load Experimental / Reference data
+        exp_dataset = None
+        exp_src_str = str(exp_source_mode)
+        if "PmtFla" in exp_src_str and os.path.exists(DEFAULT_PMTFLA_PATH):
+            exp_dataset = parse_spectrometer_file(
+                DEFAULT_PMTFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=923604613.0295
+            )
+            origin_mhz = exp_dataset.origin_mhz
+        elif "IAR.asc" in exp_src_str and os.path.exists(DEFAULT_IAR_ASC_PATH):
+            exp_dataset = parse_spectrometer_file(
+                DEFAULT_IAR_ASC_PATH, fwhm_mhz=fwhm_mhz, grid_points=2500, reference_origin_mhz=923604613.0295
+            )
+            origin_mhz = exp_dataset.origin_mhz
+        elif "Subido" in exp_src_str and uploaded_exp_file is not None:
+            up_path = uploaded_exp_file.name if hasattr(uploaded_exp_file, "name") else str(uploaded_exp_file)
+            if os.path.exists(up_path):
+                exp_dataset = parse_spectrometer_file(up_path, fwhm_mhz=fwhm_mhz, grid_points=2500)
+                origin_mhz = exp_dataset.origin_mhz
+                # Re-center simulated lines around the uploaded file's band origin
+                shift_mhz = origin_mhz - (origin_cm1 * WAVENUMBER_TO_MHZ)
+                for ln in lines:
+                    ln.frequency_mhz += shift_mhz
+
         sim = SpectrumSimulator(lines=lines, fwhm_mhz=fwhm_mhz, profile="voigt")
-        freq_axis, intensity = sim.simulate(grid_points=2500)
 
-        origin_mhz = 30000.0 * 29979.2458
+        if exp_dataset is not None and exp_dataset.file_format == "spectrometer_xy":
+            f_range = (float(exp_dataset.freq_mhz[0]), float(exp_dataset.freq_mhz[-1]))
+            freq_axis, intensity, sub_dict = sim.simulate_subbands(
+                grid_points=len(exp_dataset.freq_mhz), freq_range_mhz=f_range
+            )
+            # Align freq_axis exactly to experimental spectrometer points for exact correlation
+            y_sim_interp = np.interp(exp_dataset.freq_mhz, freq_axis, intensity)
+            freq_axis = exp_dataset.freq_mhz
+            intensity = y_sim_interp
+            for k in sub_dict:
+                sub_dict[k] = np.interp(exp_dataset.freq_mhz, np.linspace(f_range[0], f_range[1], len(sub_dict[k])), sub_dict[k])
+        elif exp_dataset is not None and exp_dataset.file_format == "jb95_asc":
+            f_range = (float(exp_dataset.freq_mhz[0]), float(exp_dataset.freq_mhz[-1]))
+            freq_axis, intensity, sub_dict = sim.simulate_subbands(grid_points=2500, freq_range_mhz=f_range)
+        else:
+            freq_axis, intensity, sub_dict = sim.simulate_subbands(grid_points=2500)
+
         rel_freq_ghz = (freq_axis - origin_mhz) / 1000.0
-
-        fig, ax = plt.subplots(figsize=(10.5, 4.9), dpi=int(render_dpi))
+        fig, ax = plt.subplots(figsize=(10.6, 5.0), dpi=int(render_dpi))
 
         ref_note = ""
-        y_ref_plotted = None
-        if preset_name in PRESETS:
-            p_ref = PRESETS[preset_name]
-            s0_ref = MoleculeState("S0_ref", A=p_ref["A0"], B=p_ref["B0"], C=p_ref["C0"],
-                                   Delta_J=0.00025, Delta_JK=-0.00060, Delta_K=0.00120)
-            s1_ref = MoleculeState("S1_ref", A=p_ref["A1"], B=p_ref["B1"], C=p_ref["C1"],
-                                   Delta_J=0.00024, Delta_JK=-0.00058, Delta_K=0.00115, origin=30000.0)
+        if exp_dataset is not None:
+            y_ref = exp_dataset.intensity_norm
+            if len(y_ref) != len(intensity):
+                y_ref = np.interp(freq_axis, exp_dataset.freq_mhz, y_ref)
+            norm_sim = np.linalg.norm(intensity)
+            norm_ref = np.linalg.norm(y_ref)
+            corr_exp = (float(np.dot(intensity, y_ref) / (norm_sim * norm_ref)) * 100.0) if (norm_sim > 0 and norm_ref > 0) else 0.0
+            ref_note = (
+                f"\n• Comparación vs. Datos Experimentales Reales ({exp_dataset.filename}): "
+                f"Correlación Cruzada r = {corr_exp:.2f}%\n"
+                f"  └─ {exp_dataset.summary}"
+            )
+            exp_legend_title = f"Experimental Espectrómetro ({exp_dataset.filename})"
+        else:
+            # Synthesize literature reference from PRESETS
+            s0_ref = MoleculeState("S0_ref", A=p_ref["A0"], B=p_ref["B0"], C=p_ref["C0"])
+            s1_ref = MoleculeState("S1_ref", A=p_ref["A1"], B=p_ref["B1"], C=p_ref["C1"], origin=origin_cm1)
             m0_ref = AsymmetricRotorHamiltonian(s0_ref).compute_manifold(J_max=J_max)
             m1_ref = AsymmetricRotorHamiltonian(s1_ref).compute_manifold(J_max=J_max)
             dip_ref = (p_ref["mu_a"], p_ref["mu_b"], p_ref["mu_c"])
             lines_ref = RovibronicTransitionCalculator(
-                m0_ref, m1_ref, 30000.0, p_ref["Trot"], dip_ref
+                m0_ref, m1_ref, origin_cm1, p_ref["Trot"], dip_ref
             ).calculate_transitions(J_max, J_max)
             sim_ref = SpectrumSimulator(lines=lines_ref, fwhm_mhz=p_ref["fwhm"], profile="voigt")
-            _, y_ref = sim_ref.simulate(grid_points=2500, freq_range_mhz=(float(freq_axis[0]), float(freq_axis[-1])))
+            _, y_ref = sim_ref.simulate(grid_points=len(freq_axis), freq_range_mhz=(float(freq_axis[0]), float(freq_axis[-1])))
 
             norm_sim = np.linalg.norm(intensity)
             norm_ref = np.linalg.norm(y_ref)
             corr_exp = (float(np.dot(intensity, y_ref) / (norm_sim * norm_ref)) * 100.0) if (norm_sim > 0 and norm_ref > 0) else 0.0
-
             ref_note = (
                 f"\n• Comparación vs. Literatura ({p_ref.get('ref', '')}): "
                 f"Correlación r = {corr_exp:.2f}% | "
                 f"ΔA′={A1 - p_ref['A1']:+.2f} MHz, ΔB′={B1 - p_ref['B1']:+.2f} MHz, ΔC′={C1 - p_ref['C1']:+.2f} MHz"
             )
+            exp_legend_title = f"Experimental / Literatura ({p_ref.get('ref', 'Ref')[:28]}...)"
 
-            if overlay_exp:
-                y_ref_plotted = (-y_ref + offset_exp) if mirror_exp else (y_ref + offset_exp)
-                exp_label_mode = "Invertido Espejo" if mirror_exp else (f"Offset {offset_exp:+.2f}" if abs(offset_exp) > 1e-3 else "Superpuesto")
-                ax.plot(
-                    rel_freq_ghz, y_ref_plotted,
-                    color="#ea580c", ls="--", lw=1.45, alpha=alpha_exp, zorder=3,
-                    label=f"Experimental / Literatura [{exp_label_mode}] ({p_ref.get('ref', 'Ref')[:32]}...)"
-                )
-                ax.fill_between(
-                    rel_freq_ghz, offset_exp if not mirror_exp else offset_exp, y_ref_plotted,
-                    color="#f97316", alpha=0.10 * alpha_exp, zorder=2
-                )
+        if overlay_exp:
+            y_ref_plotted = (-y_ref + offset_exp) if mirror_exp else (y_ref + offset_exp)
+            exp_label_mode = "Espejo Invertido" if mirror_exp else (f"Offset {offset_exp:+.2f}" if abs(offset_exp) > 1e-3 else "Superpuesto")
+            ax.plot(
+                rel_freq_ghz, y_ref_plotted,
+                color="#ea580c", ls="--", lw=1.35, alpha=alpha_exp, zorder=3,
+                label=f"{exp_legend_title} [{exp_label_mode}]"
+            )
+            ax.fill_between(
+                rel_freq_ghz, offset_exp, y_ref_plotted,
+                color="#f97316", alpha=0.10 * alpha_exp, zorder=2
+            )
 
         if show_sim:
             ax.plot(
                 rel_freq_ghz, intensity,
                 color="#1d4ed8", lw=1.45, alpha=alpha_sim, zorder=4,
-                label="Simulación Cuántica Actual (SpecWatson)"
+                label=f"Simulado SpecWatson [{ham_short_label} · Selección: {sel_crit.upper()}]"
             )
             ax.fill_between(
                 rel_freq_ghz, 0.0, intensity,
                 color="#3b82f6", alpha=0.18 * alpha_sim, zorder=2
             )
+
+        # Optional decomposition of Type a, Type b, Type c sub-bands
+        if show_subbands:
+            sub_styles = {
+                "a": ("#dc2626", ":", "Sub-espectro Tipo a (ΔKa=par, ΔKc=impar)"),
+                "b": ("#16a34a", "-.", "Sub-espectro Tipo b (ΔKa=impar, ΔKc=impar)"),
+                "c": ("#9333ea", "--", "Sub-espectro Tipo c (ΔKa=impar, ΔKc=par)"),
+            }
+            for btype, (col, ls_st, lbl_sub) in sub_styles.items():
+                if btype in sub_dict and len(sub_dict[btype]) == len(rel_freq_ghz) and np.max(sub_dict[btype]) > 1e-4:
+                    ax.plot(rel_freq_ghz, sub_dict[btype], color=col, ls=ls_st, lw=1.25, alpha=0.9, zorder=5, label=lbl_sub)
 
         if not show_sim and not overlay_exp:
             ax.text(
@@ -279,7 +469,7 @@ def simulate_rovibronic_spectrum(
 
         if mirror_exp:
             ax.axhline(0.0, color="#475569", lw=0.8, ls="-", alpha=0.6)
-        ax.axvline(0.0, color="#ef4444", ls=":", lw=0.95, alpha=0.7, label="Origen de Banda ν₀")
+        ax.axvline(0.0, color="#ef4444", ls=":", lw=0.95, alpha=0.7, label=f"Origen ν₀ ({origin_mhz*MHZ_TO_WAVENUMBER:.2f} cm⁻¹)")
 
         # Apply Horizontal Zoom & Pan
         f_min, f_max = float(rel_freq_ghz[0]), float(rel_freq_ghz[-1])
@@ -301,22 +491,31 @@ def simulate_rovibronic_spectrum(
         kappa_s0 = state_s0.kappa
         kappa_s1 = state_s1.kappa
 
+        # Count lines by type and branch
+        n_a = sum(1 for ln in lines if ln.band_type == "a")
+        n_b = sum(1 for ln in lines if ln.band_type == "b")
+        n_c = sum(1 for ln in lines if ln.band_type == "c")
+        n_P = sum(1 for ln in lines if ln.branch == "P")
+        n_Q = sum(1 for ln in lines if ln.branch == "Q")
+        n_R = sum(1 for ln in lines if ln.branch == "R")
+
         ax.set_title(
-            f"Espectro Rovibrónico S₁ ← S₀ (J_max={J_max}, T_rot={T_rot:.1f} K, FWHM={fwhm_mhz:.0f} MHz)",
-            fontsize=11.5, fontweight="bold", pad=10
+            f"Espectro S₁ ← S₀ [{ham_short_label} | Regla: Tipo {sel_crit.upper()} | J_max={J_max}, T_rot={T_rot:.1f} K, FWHM={fwhm_mhz:.0f} MHz]",
+            fontsize=11.0, fontweight="bold", pad=10
         )
         ax.set_xlabel("Desplazamiento de Frecuencia Relativa ν - ν₀ (GHz)", fontsize=10.5)
         ax.set_ylabel("Intensidad Normalizada (u.a.)", fontsize=10.5)
         ax.grid(True, linestyle="--", alpha=0.35)
-        ax.legend(loc="upper right", fontsize=8.5, framealpha=0.92)
+        ax.legend(loc="upper right", fontsize=8.2, framealpha=0.92)
         fig.tight_layout()
 
         stats = (
             f"✓ Simulación cuántica completada en {elapsed_ms:.1f} ms\n"
-            f"• Transiciones rovibrónicas activas evaluadas: {len(lines):,}\n"
-            f"• Parámetro de asimetría de Ray: κ(S₀) = {kappa_s0:.4f}  |  κ(S₁) = {kappa_s1:.4f}\n"
-            f"• Cambio rotacional al excitar: ΔA = {A1 - A0:+.2f} MHz, ΔB = {B1 - B0:+.2f} MHz, ΔC = {C1 - C0:+.2f} MHz\n"
-            f"• Pesos de selección dipolar: μₐ²={dip[0]:.2f}, μ_b²={dip[1]:.2f}, μ_c²={dip[2]:.2f} ( bloques de Wang E⁺, E⁻, O⁺, O⁻ )"
+            f"• Método Hamiltoniano Activo: {state_s0.model_description}\n"
+            f"• Criterio de Selección Espectral: {sel_desc}\n"
+            f"• Desglose de Transiciones ({len(lines):,} totales): Tipo a = {n_a:,} | Tipo b = {n_b:,} | Tipo c = {n_c:,}  (Ramas: P={n_P:,}, Q={n_Q:,}, R={n_R:,})\n"
+            f"• Factor de Asimetría de Ray (κ = (2B-A-C)/(A-C)): κ(S₀) = {kappa_s0:.4f} | κ(S₁) = {kappa_s1:.4f} → {state_s0.kappa_classification}\n"
+            f"• Cambio Rotacional al Excitar: ΔA = {A1 - A0:+.2f} MHz, ΔB = {B1 - B0:+.2f} MHz, ΔC = {C1 - C0:+.2f} MHz"
             f"{ref_note}"
         )
         return fig, stats
@@ -328,6 +527,61 @@ def simulate_rovibronic_spectrum(
         return fig, f"Error detallado: {repr(e)}"
 
 
+def handle_uploaded_exp_file(
+    uploaded_file,
+    A0, B0, C0, A1, B1, C1,
+    band_type_mode, hamiltonian_model, fwhm_mhz
+):
+    """
+    Processes a newly uploaded spectrometer file (.asc, PmtFla, .dat, .txt, .csv).
+    If it is a JB95 .asc file (like IAR.asc), it automatically populates the extracted
+    rotational constants (A0, B0, C0, A1, B1, C1), Pure Band Type, and Rigid Rotor mode!
+    """
+    if uploaded_file is None:
+        return (
+            A0, B0, C0, A1, B1, C1,
+            band_type_mode, hamiltonian_model, EXP_SOURCE_CHOICES[0],
+            "⚠️ Primero selecciona o arrastra un archivo (.asc, PmtFla, .dat, .csv) en la casilla de carga."
+        )
+
+    up_path = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
+    try:
+        ds = parse_spectrometer_file(up_path, fwhm_mhz=float(fwhm_mhz))
+        new_band_mode = band_type_mode
+        new_ham_mode = hamiltonian_model
+
+        if ds.file_format == "jb95_asc":
+            if ds.band_type_counts:
+                dom = max(ds.band_type_counts, key=ds.band_type_counts.get)
+                if dom == "a":
+                    new_band_mode = BAND_TYPE_CHOICES[1]
+                elif dom == "b":
+                    new_band_mode = BAND_TYPE_CHOICES[0]
+                elif dom == "c":
+                    new_band_mode = BAND_TYPE_CHOICES[2]
+            new_ham_mode = HAMILTONIAN_CHOICES[0]  # JB95 Rigid Rotor
+            if ds.extracted_constants is not None:
+                c = ds.extracted_constants
+                return (
+                    round(c["A0"], 4), round(c["B0"], 4), round(c["C0"], 4),
+                    round(c["A1"], 4), round(c["B1"], 4), round(c["C1"], 4),
+                    new_band_mode, new_ham_mode, EXP_SOURCE_CHOICES[3],
+                    f"✅ {ds.summary}\n👉 Constantes (A, B, C) y Regla de Selección actualizadas automáticamente desde '{ds.filename}'."
+                )
+
+        return (
+            A0, B0, C0, A1, B1, C1,
+            new_band_mode, new_ham_mode, EXP_SOURCE_CHOICES[3],
+            f"✅ {ds.summary}\n👉 Espectro experimental cargado y superpuesto en la gráfica."
+        )
+    except Exception as e:
+        return (
+            A0, B0, C0, A1, B1, C1,
+            band_type_mode, hamiltonian_model, EXP_SOURCE_CHOICES[0],
+            f"❌ Error al leer archivo '{os.path.basename(up_path)}': {str(e)}"
+        )
+
+
 def export_spectrum_high_dpi(
     A0, B0, C0,
     A1, B1, C1,
@@ -335,6 +589,12 @@ def export_spectrum_high_dpi(
     mu_a, mu_b, mu_c,
     J_max,
     preset_name,
+    band_type_mode,
+    hamiltonian_model,
+    dJ_khz, dJK_khz, dK_khz, delJ_khz, delK_khz,
+    exp_source_mode,
+    uploaded_exp_file,
+    show_subbands,
     show_sim,
     overlay_exp,
     mirror_exp,
@@ -357,6 +617,12 @@ def export_spectrum_high_dpi(
         A0, B0, C0, A1, B1, C1,
         T_rot, fwhm_mhz, mu_a, mu_b, mu_c, J_max,
         preset_name=preset_name,
+        band_type_mode=band_type_mode,
+        hamiltonian_model=hamiltonian_model,
+        dJ_khz=dJ_khz, dJK_khz=dJK_khz, dK_khz=dK_khz, delJ_khz=delJ_khz, delK_khz=delK_khz,
+        exp_source_mode=exp_source_mode,
+        uploaded_exp_file=uploaded_exp_file,
+        show_subbands=show_subbands,
         show_sim=show_sim,
         overlay_exp=overlay_exp,
         mirror_exp=mirror_exp,
@@ -380,36 +646,48 @@ def export_spectrum_high_dpi(
 
 def reset_view_controls():
     """Resets visibility, opacity, vertical offset, and zoom/pan controls to defaults."""
-    return True, True, False, 0.85, 0.85, 0.0, 1.0, 0.0, 1.0, 0.0
+    return False, True, True, False, 0.85, 0.85, 0.0, 1.0, 0.0, 1.0, 0.0
 
 
-def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
+def run_autonomous_fit_demo(molecule_choice, fit_band_mode, fit_ham_mode, noise_pct, max_iter):
     """Callback for Tab 2: Live Differential Evolution + Simplex Contour Fitting."""
     t0 = time.perf_counter()
     plt.close("all")
 
     try:
-        p = PRESETS.get(molecule_choice, PRESETS["Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)"])
-        guess_A = p["A1"] - 32.0
-        guess_B = p["B1"] + 14.0
-        guess_C = max(10.0, p["C1"] - 12.0)
-        bounds = [
-            (p["A1"] - 50.0, p["A1"] + 50.0),
-            (p["B1"] - 30.0, p["B1"] + 30.0),
-            (max(5.0, p["C1"] - 25.0), p["C1"] + 25.0),
-            (-20.0, 20.0)
-        ]
-        j_fit = 7
+        p = PRESETS.get(
+            molecule_choice,
+            PRESETS["Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)"]
+        )
+        sel_crit, dip, sel_desc = _resolve_selection_criterion(
+            fit_band_mode, p["mu_a"], p["mu_b"], p["mu_c"]
+        )
+        is_rigid = "Rotor Rígido" in str(fit_ham_mode)
+        dJ_val = 0.0 if is_rigid else 0.00025
 
-        s0 = MoleculeState("S0", A=p["A0"], B=p["B0"], C=p["C0"])
-        s1_true = MoleculeState("S1_true", A=p["A1"], B=p["B1"], C=p["C1"], origin=30000.0)
-        s1_guess = MoleculeState("S1_guess", A=guess_A, B=guess_B, C=guess_C, origin=30000.0)
+        guess_A = p["A1"] - 28.0
+        guess_B = p["B1"] + 12.0
+        guess_C = max(10.0, p["C1"] - 10.0)
+        bounds = [
+            (p["A1"] - 45.0, p["A1"] + 45.0),
+            (p["B1"] - 25.0, p["B1"] + 25.0),
+            (max(5.0, p["C1"] - 20.0), p["C1"] + 20.0),
+            (-15.0, 15.0)
+        ]
+        j_fit = 8
+        origin_mhz = float(p.get("origin_mhz", 30000.0 * WAVENUMBER_TO_MHZ))
+        origin_cm1 = origin_mhz * MHZ_TO_WAVENUMBER
+
+        s0 = MoleculeState("S0", A=p["A0"], B=p["B0"], C=p["C0"], Delta_J=dJ_val)
+        s1_true = MoleculeState("S1_true", A=p["A1"], B=p["B1"], C=p["C1"], Delta_J=dJ_val, origin=origin_cm1)
+        s1_guess = MoleculeState("S1_guess", A=guess_A, B=guess_B, C=guess_C, Delta_J=dJ_val, origin=origin_cm1)
 
         g_man = AsymmetricRotorHamiltonian(s0).compute_manifold(j_fit)
         e_man_true = AsymmetricRotorHamiltonian(s1_true).compute_manifold(j_fit)
-        dip = (p["mu_a"], p["mu_b"], p["mu_c"])
 
-        calc_true = RovibronicTransitionCalculator(g_man, e_man_true, 30000.0, p["Trot"], dip)
+        calc_true = RovibronicTransitionCalculator(
+            g_man, e_man_true, origin_cm1, p["Trot"], dip, selection_criterion=sel_crit
+        )
         lines_true = calc_true.calculate_transitions(j_fit, j_fit)
 
         sim_true = SpectrumSimulator(lines_true, fwhm_mhz=p["fwhm"], profile="gaussian")
@@ -429,7 +707,8 @@ def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
             J_max=j_fit,
             fwhm_mhz=p["fwhm"],
             temperature_K=p["Trot"],
-            dipole_fractions=dip
+            dipole_fractions=dip,
+            selection_criterion=sel_crit
         )
 
         y_init = fitter._forward_model(guess_A, guess_B, guess_C, 0.0)
@@ -445,7 +724,6 @@ def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
         if y_fit.max() > 0:
             y_fit /= y_fit.max()
 
-        origin_mhz = 30000.0 * 29979.2458
         rel_f = freq_axis - origin_mhz
 
         fig, (ax1, ax2) = plt.subplots(
@@ -457,7 +735,10 @@ def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
         ax1.plot(rel_f, y_init, color="#f59e0b", ls=":", lw=1.3, label=f"Semilla Inicial Ab Initio (A′={guess_A:.0f} MHz)")
         ax1.plot(rel_f, y_fit, color="#ef4444", ls="--", lw=1.8, label=f"Ajuste Híbrido DE + Simplex (r = {corr_pct:.2f}%)")
         ax1.set_ylabel("Intensidad Normalizada", fontsize=10)
-        ax1.set_title(f"Ajuste de Contorno por Evolución Diferencial: {molecule_choice}", fontsize=11, fontweight="bold")
+        ax1.set_title(
+            f"Ajuste Evolutivo [{('Rotor Rígido' if is_rigid else 'Watson')} · Tipo {sel_crit.upper()}]: {molecule_choice}",
+            fontsize=10.8, fontweight="bold"
+        )
         ax1.legend(loc="upper right", fontsize=8.5)
         ax1.grid(True, ls="--", alpha=0.4)
 
@@ -474,11 +755,12 @@ def run_autonomous_fit_demo(molecule_choice, noise_pct, max_iter):
         elapsed_s = time.perf_counter() - t0
         report = (
             f"✓ Ajuste Híbrido (Evolución Diferencial + Simplex) completado en {elapsed_s:.2f} s\n"
-            f"• Referencia Experimental: {p.get('ref', 'Literatura')}\n"
+            f"• Método Hamiltoniano: {'Rotor Rígido Puro (ΔJ=0)' if is_rigid else 'Watson Reducción A'}\n"
+            f"• Criterio de Selección: {sel_desc}\n"
             f"• Correlación Cruzada Alcanzada: {corr_pct:.2f}%\n"
-            f"• A′ Recuperada: {best_p[0]:.2f} MHz  (Valor Literatura: {p['A1']:.2f} MHz | Error: {abs(best_p[0]-p['A1']):.2f} MHz)\n"
-            f"• B′ Recuperada: {best_p[1]:.2f} MHz  (Valor Literatura: {p['B1']:.2f} MHz | Error: {abs(best_p[1]-p['B1']):.2f} MHz)\n"
-            f"• C′ Recuperada: {best_p[2]:.2f} MHz  (Valor Literatura: {p['C1']:.2f} MHz | Error: {abs(best_p[2]-p['C1']):.2f} MHz)"
+            f"• A′ Recuperada: {best_p[0]:.2f} MHz  (Valor Real: {p['A1']:.2f} MHz | Error: {abs(best_p[0]-p['A1']):.2f} MHz)\n"
+            f"• B′ Recuperada: {best_p[1]:.2f} MHz  (Valor Real: {p['B1']:.2f} MHz | Error: {abs(best_p[1]-p['B1']):.2f} MHz)\n"
+            f"• C′ Recuperada: {best_p[2]:.2f} MHz  (Valor Real: {p['C1']:.2f} MHz | Error: {abs(best_p[2]-p['C1']):.2f} MHz)"
         )
         return fig, report
 
@@ -508,6 +790,21 @@ def run_quantum_3d_tab(query_input, engine_choice, num_confs, s1_expansion):
         else:
             planarity_note = "Molécula NO PLANA / Con estructura 3D fuera del plano"
 
+        # Classify kappa
+        k_val = res.kappa
+        if k_val <= -0.95:
+            k_desc = "Trompo Cuasi-Simétrico Prolato Extremo (tipo aguja/cigarro, A ≫ B ≈ C)"
+        elif k_val <= -0.60:
+            k_desc = "Rotor Asimétrico Prolato (alargado en el eje a, A > B ≈ C)"
+        elif k_val < 0.60:
+            k_desc = "Rotor de Asimetría Intermedia (A > B > C)"
+        else:
+            k_desc = "Rotor Asimétrico Oblato (aplanado tipo disco, A ≈ B > C)"
+
+        # Classify dominant dipole axis
+        fracs = {"a (Tipo a)": res.mu_a_frac, "b (Tipo b)": res.mu_b_frac, "c (Tipo c)": res.mu_c_frac}
+        dom_axis = max(fracs, key=fracs.get)
+
         lit_block = ""
         if res.formula in EXPERIMENTAL_LITERATURE_DB:
             lit = EXPERIMENTAL_LITERATURE_DB[res.formula]
@@ -529,13 +826,12 @@ def run_quantum_3d_tab(query_input, engine_choice, num_confs, s1_expansion):
         report = (
             f"✓ Geometría 3D y Tensor de Inercia calculados en {res.elapsed_sec*1000:.1f} ms\n"
             f"• Fórmula Molecular: {res.formula} ({res.num_atoms} átomos)  |  SMILES: {res.smiles}\n"
-            f"• Motor Cuántico: {res.engine_used}\n"
-            f"• Hardware Detectado: {res.device_used}  |  Energía: {res.energy_kcal_or_eh}\n"
+            f"• Motor Cuántico: {res.engine_used}  |  Hardware: {res.device_used}  |  Energía: {res.energy_kcal_or_eh}\n"
             f"• Momentos Principales de Inercia: Ia = {res.Ia:.2f}, Ib = {res.Ib:.2f}, Ic = {res.Ic:.2f} u·Å²\n"
             f"• Defecto de Inercia Cuántico: ΔI = Ic - Ia - Ib = {res.inertial_defect:+.4f} u·Å² ({planarity_note})\n"
-            f"• Constantes Estado Basal (S₀): A″ = {res.A0_mhz:.2f} MHz, B″ = {res.B0_mhz:.2f} MHz, C″ = {res.C0_mhz:.2f} MHz (κ = {res.kappa:.4f})\n"
-            f"• Constantes Estado Excitado Est. (S₁): A′ = {res.A1_mhz:.2f} MHz, B′ = {res.B1_mhz:.2f} MHz, C′ = {res.C1_mhz:.2f} MHz\n"
-            f"• Momento Dipolar: |μ| = {res.dipole_total_debye:.2f} D  →  Fracciones: μₐ²={res.mu_a_frac:.2f}, μ_b²={res.mu_b_frac:.2f}, μ_c²={res.mu_c_frac:.2f}"
+            f"• Constantes Estado Basal (S₀): A″ = {res.A0_mhz:.2f} MHz, B″ = {res.B0_mhz:.2f} MHz, C″ = {res.C0_mhz:.2f} MHz\n"
+            f"• Factor de Asimetría de Ray: κ = {res.kappa:.4f} → {k_desc}\n"
+            f"• Momento Dipolar Permanente: |μ| = {res.dipole_total_debye:.2f} D (Orientado principalmente sobre Eje {dom_axis}: μₐ²={res.mu_a_frac:.2f}, μ_b²={res.mu_b_frac:.2f}, μ_c²={res.mu_c_frac:.2f})"
             f"{lit_block}"
         )
 
@@ -554,9 +850,9 @@ def run_quantum_3d_tab(query_input, engine_choice, num_confs, s1_expansion):
         err_html = f"<div style='padding:20px;color:#ef4444;font-weight:bold;'>{str(e)}</div>"
         return (
             fig, err_html, f"Error: {str(e)}",
-            2178.60, 1251.20, 794.50,
-            2145.30, 1242.10, 788.90,
-            1.0, 0.0, 0.0
+            2253.24, 594.21, 470.37,
+            2250.61, 586.35, 465.29,
+            0.0, 1.0, 0.0
         )
 
 
@@ -567,14 +863,17 @@ def select_catalog_molecule(catalog_choice):
 
 
 def load_preset_values(preset_name):
-    default_key = "Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)"
+    default_key = "Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)"
     p = PRESETS.get(preset_name, PRESETS[default_key])
     return (
         p["A0"], p["B0"], p["C0"],
         p["A1"], p["B1"], p["C1"],
         p["Trot"], p["fwhm"],
         p["mu_a"], p["mu_b"], p["mu_c"],
-        p["Jmax"]
+        p["Jmax"],
+        p.get("band_mode", BAND_TYPE_CHOICES[0]),
+        p.get("ham_mode", HAMILTONIAN_CHOICES[0]),
+        p.get("exp_source", EXP_SOURCE_CHOICES[2]),
     )
 
 
@@ -587,74 +886,126 @@ def build_gradio_app():
             # 🔬 SpecWatson: Suite de Espectroscopía Rovibrónica & Química Cuántica en GPU
             **Universidad de Guanajuato · División de Ciencias e Ingenierías (Campus León)**  
             **Autor:** Miguel Díaz (Maestría en Ciencias) · **Dirección y Respaldo Científico:** Dr. Leonardo Álvarez-Valtierra & Dr. Alejandro Gil-Villegas (SNII Nivel III)  
-            *De la estructura molecular 3D y el tensor de inercia al Hamiltoniano de Watson y el ajuste evolutivo contra espectros experimentales (HITRAN / JPL / LIF).*
+            *Simulación cuántica por Rotor Rígido y Hamiltoniano de Watson (Base de Wang), Reglas de Selección Tipo a/b/c, Lectura directa de archivos del espectrómetro (`PmtFla`, `.asc`) y Química Cuántica 3D.*
             """
         )
 
         with gr.Tabs() as main_tabs:
             # =========================================================================
-            # TAB 1: SIMULACIÓN DIRECTA DE ESPECTROS (WANG) + COMPARACIÓN LITERATURA
+            # TAB 1: SIMULACIÓN DIRECTA DE ESPECTROS (WANG) + ARCHIVOS ESPECTRÓMETRO
             # =========================================================================
-            with gr.TabItem("⚡ 1. Simulador Cuántico de Espectros (Wang)", id="tab_sim"):
+            with gr.TabItem("⚡ 1. Simulador Cuántico de Espectros (Rotor Rígido / Watson)", id="tab_sim"):
                 with gr.Row():
                     preset_dropdown = gr.Dropdown(
                         choices=list(PRESETS.keys()),
-                        value="Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)",
-                        label="📁 Seleccionar Sistema Molecular (Aromáticos LIF y Estándares HITRAN / JPL)",
+                        value="Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)",
+                        label="📁 1. Sistema Molecular (Incluye Datos Experimentales Reales de Carbazol del Dr. Leonardo)",
                         scale=3
                     )
                     show_sim_chk = gr.Checkbox(
                         value=True,
-                        label="🔵 Mostrar Espectro Simulado (SpecWatson)",
+                        label="🔵 Mostrar Simulado (SpecWatson)",
                         scale=1
                     )
                     overlay_exp_chk = gr.Checkbox(
                         value=True,
-                        label="🟠 Mostrar Experimental (Referencia)",
+                        label="🟠 Mostrar Experimental",
                         scale=1
                     )
                     mirror_exp_chk = gr.Checkbox(
                         value=False,
-                        label="🪞 Modo Espejo JCP (Invertir Experimental Abajo)",
+                        label="🪞 Modo Espejo JCP (Invertir Abajo)",
                         scale=1
                     )
 
                 with gr.Row():
+                    hamiltonian_dropdown = gr.Dropdown(
+                        choices=HAMILTONIAN_CHOICES,
+                        value=HAMILTONIAN_CHOICES[0],
+                        label="⚙️ 2. Método Hamiltoniano (Rotor Rígido Puro vs. Distorsión Centrífuga de Watson)",
+                        scale=2
+                    )
+                    band_type_dropdown = gr.Dropdown(
+                        choices=BAND_TYPE_CHOICES,
+                        value=BAND_TYPE_CHOICES[0],
+                        label="🎯 3. Criterio de Selección de Espectros (Tipo a, Tipo b, Tipo c o Híbrido)",
+                        scale=2
+                    )
+                    exp_source_dropdown = gr.Dropdown(
+                        choices=EXP_SOURCE_CHOICES,
+                        value=EXP_SOURCE_CHOICES[0],
+                        label="📡 4. Fuente de Datos Experimentales a Comparar",
+                        scale=2
+                    )
+
+                with gr.Row():
                     with gr.Column(scale=1):
-                        gr.Markdown("### 1. Estado Basal (S₀) - MHz")
+                        gr.Markdown("### Estado Basal (S₀) y Excitado (S₁) - MHz")
                         with gr.Row():
-                            a0 = gr.Number(value=2178.60, label="A″ Basal (MHz)")
-                            b0 = gr.Number(value=1251.20, label="B″ Basal (MHz)")
-                            c0 = gr.Number(value=794.50, label="C″ Basal (MHz)")
+                            a0 = gr.Number(value=2253.2409, label="A″ Basal (MHz)")
+                            b0 = gr.Number(value=594.2103, label="B″ Basal (MHz)")
+                            c0 = gr.Number(value=470.3670, label="C″ Basal (MHz)")
 
-                        gr.Markdown("### 2. Estado Excitado (S₁) - MHz")
                         with gr.Row():
-                            a1 = gr.Number(value=2145.30, label="A′ Excitado (MHz)")
-                            b1 = gr.Number(value=1242.10, label="B′ Excitado (MHz)")
-                            c1 = gr.Number(value=788.90, label="C′ Excitado (MHz)")
+                            a1 = gr.Number(value=2250.6104, label="A′ Excitado (MHz)")
+                            b1 = gr.Number(value=586.3482, label="B′ Excitado (MHz)")
+                            c1 = gr.Number(value=465.2923, label="C′ Excitado (MHz)")
 
-                        gr.Markdown("### 3. Condiciones Experimentales del Jet")
+                        gr.Markdown("### Condiciones del Jet Supersónico")
                         with gr.Row():
-                            trot = gr.Slider(0.5, 15.0, value=3.5, step=0.1, label="Temp. Rotacional (K)")
-                            fwhm = gr.Slider(5.0, 60.0, value=25.0, step=1.0, label="Ancho Láser FWHM (MHz)")
-                            jmax = gr.Slider(4, 22, value=12, step=1, label="J Máximo")
+                            trot = gr.Slider(0.5, 15.0, value=2.6, step=0.1, label="Temp. Rotacional (K)")
+                            fwhm = gr.Slider(5.0, 80.0, value=45.0, step=1.0, label="Ancho Láser FWHM (MHz)")
+                            jmax = gr.Slider(4, 28, value=22, step=1, label="J Máximo")
 
-                        gr.Markdown("### 4. Componentes Dipolares (Banda Híbrida)")
+                        gr.Markdown("### Pesos Dipolares de Transición (μₐ², μ_b², μ_c²)")
                         with gr.Row():
-                            mu_a = gr.Slider(0.0, 1.0, value=1.0, step=0.05, label="μₐ² (tipo a)")
-                            mu_b = gr.Slider(0.0, 1.0, value=0.0, step=0.05, label="μ_b² (tipo b)")
-                            mu_c = gr.Slider(0.0, 1.0, value=0.0, step=0.05, label="μ_c² (tipo c)")
+                            mu_a = gr.Slider(0.0, 1.0, value=0.0, step=0.05, label="μₐ² (Tipo a)")
+                            mu_b = gr.Slider(0.0, 1.0, value=1.0, step=0.05, label="μ_b² (Tipo b)")
+                            mu_c = gr.Slider(0.0, 1.0, value=0.0, step=0.05, label="μ_c² (Tipo c)")
+
+                        with gr.Accordion("🔬 Constantes de Distorsión Centrífuga de Watson (Se apagan a 0 en Rotor Rígido)", open=False):
+                            with gr.Row():
+                                dJ_in = gr.Number(value=0.25, label="ΔJ (kHz)")
+                                dJK_in = gr.Number(value=-0.60, label="ΔJK (kHz)")
+                                dK_in = gr.Number(value=1.20, label="ΔK (kHz)")
+                            with gr.Row():
+                                delJ_in = gr.Number(value=0.04, label="δJ (kHz)")
+                                delK_in = gr.Number(value=0.30, label="δK (kHz)")
+
+                        with gr.Accordion("📤 Cargar Archivos Directos del Espectrómetro (.asc, PmtFla, .dat, .csv)", open=True):
+                            gr.Markdown(
+                                "*Sube cualquier archivo crudo del espectrómetro (`PmtFla`, `.dat`, `.csv`) o lista de líneas de JB95 (`.asc` como `IAR.asc`):*"
+                            )
+                            exp_file_upload = gr.File(
+                                label="Subir Archivo del Espectrómetro (.asc, PmtFla, .dat, .txt, .csv)",
+                                file_count="single"
+                            )
+                            btn_load_exp = gr.Button(
+                                "📥 Procesar Archivo Experimental y Extraer Constantes",
+                                variant="secondary",
+                                size="sm"
+                            )
+                            upload_status_out = gr.Textbox(
+                                label="Estado del Archivo Experimental Cargado",
+                                value="✅ Pre-cargados en memoria: 'recursos/PmtFla' (1,919 puntos espectrómetro) y 'recursos/IAR.asc' (2,705 líneas JB95 Tipo B).",
+                                lines=2
+                            )
 
                         btn_sim = gr.Button("⚡ Simular y Comparar Espectro Cuántico", variant="primary", size="lg")
 
                     with gr.Column(scale=2):
-                        plot_out = gr.Plot(label="Espectro Simulado vs. Referencia Experimental")
+                        plot_out = gr.Plot(label="Espectro Simulado vs. Datos Experimentales del Espectrómetro")
 
-                        with gr.Accordion("🎛️ Controles de Visualización: Opacidad, Desplazamiento Arriba/Abajo, Zoom y Exportación (300/600 DPI)", open=True):
+                        with gr.Accordion("🎛️ Controles de Visualización: Sub-bandas (a/b/c), Opacidad, Offset, Zoom y Exportación (300/600 DPI)", open=True):
                             with gr.Row():
-                                alpha_sim_slider = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="🔵 Opacidad Simulado")
-                                alpha_exp_slider = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="🟠 Opacidad Experimental")
-                                offset_exp_slider = gr.Slider(-1.2, 1.2, value=0.0, step=0.05, label="↕️ Separar Experimental (Offset ΔY)")
+                                show_subbands_chk = gr.Checkbox(
+                                    value=False,
+                                    label="🎨 Desglosar sub-espectros individuales Tipo a, Tipo b y Tipo c en la gráfica",
+                                    scale=2
+                                )
+                                alpha_sim_slider = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="🔵 Opacidad Simulado", scale=1)
+                                alpha_exp_slider = gr.Slider(0.05, 1.0, value=0.85, step=0.05, label="🟠 Opacidad Experimental", scale=1)
+                                offset_exp_slider = gr.Slider(-1.2, 1.2, value=0.0, step=0.05, label="↕️ Separar Experimental (ΔY)", scale=1)
 
                             with gr.Row():
                                 zoom_x_slider = gr.Slider(1.0, 12.0, value=1.0, step=0.5, label="🔍 Zoom Horizontal (1x–12x)")
@@ -678,7 +1029,27 @@ def build_gradio_app():
 
                             export_file_out = gr.File(label="📄 Archivo Exportado (Haz clic en el enlace derecho para descargar a tu PC)")
 
-                        stats_out = gr.Textbox(label="Diagnóstico Cuántico, Métricas de Wang & Correlación con Literatura", lines=7)
+                        stats_out = gr.Textbox(label="Diagnóstico Cuántico: Método, Reglas de Selección (a/b/c), Factor κ y Correlación Experimental", lines=7)
+
+                        with gr.Accordion("📖 Guía Conceptual Rápida: ¿Qué significan Espectros Tipo a/b/c, Momentos Dipolares (μ), Factor κ y Rotor Rígido?", open=False):
+                            gr.Markdown(
+                                r"""
+                                * **1. ¿Qué son los espectros Tipo $a$, Tipo $b$ y Tipo $c$?**  
+                                  Toda molécula tiene 3 ejes principales de inercia perpendiculares entre sí: **$a$** (el eje más largo, menor inercia $I_a$), **$b$** (eje corto en el plano molecular, inercia intermedia $I_b$) y **$c$** (perpendicular al plano aromático, mayor inercia $I_c$). Según hacia qué eje oscile el **momento dipolar de transición electrónica** al absorber el fotón UV, cambian las reglas cuánticas de selección $(\Delta K_a, \Delta K_c)$:
+                                  * **Tipo $a$ ($\mu_a^2 = 1$, $\Delta K_a = 0, \pm 2\text{ [par]}$, $\Delta K_c = \pm 1\text{ [impar]}$):** Genera una rama $Q$ central muy intensa y compacta en $\nu_0$.
+                                  * **Tipo $b$ ($\mu_b^2 = 1$, $\Delta K_a = \pm 1\text{ [impar]}$, $\Delta K_c = \pm 1\text{ [impar]}$):** **Caso del Carbazol** (donde el eje de simetría $C_2$ sobre el enlace N–H es el eje $b$). Produce una depresión o hueco característico justo en el origen $\nu_0$ y sub-bandas laterales $K_a$ bien resueltas.
+                                  * **Tipo $c$ ($\mu_c^2 = 1$, $\Delta K_a = \pm 1\text{ [impar]}$, $\Delta K_c = 0, \pm 2\text{ [par]}$):** Transición perpendicular al plano molecular.
+                                  * **Banda Híbrida:** Cuando la molécula carece de simetría alta (ej. 1-Naftol, Indol, Resveratrol), el dipolo apunta en diagonal entre los ejes y el espectro es una suma ponderada $\mu_a^2 I_a + \mu_b^2 I_b + \mu_c^2 I_c$.
+                                * **2. ¿Qué es el Factor $\kappa$ (Parámetro de Asimetría de Ray)?**  
+                                  Definido como $\kappa = \frac{2B - A - C}{A - C}$, mide la forma geométrica del rotor entre **$-1$ y $+1$**:
+                                  * **$\kappa = -1$:** Trompo simétrico **prolato** (forma alargada de cigarro: $A > B = C$). El Carbazol tiene $\kappa = -0.8608$ (rotor asimétrico casi prolato).
+                                  * **$\kappa = 0$:** Rotor de máxima asimetría ($B$ exactamente a la mitad entre $A$ y $C$).
+                                  * **$\kappa = +1$:** Trompo simétrico **oblato** (forma de moneda/disco: $A = B > C$).
+                                * **3. ¿Qué diferencia hay entre "Rotor Rígido Puro" y "Hamiltoniano de Watson"?**  
+                                  * **Rotor Rígido Puro:** Considera la molécula como una estructura indeformable caracterizada únicamente por $(A, B, C)$ con constantes de distorsión iguales a cero ($\Delta_J = \Delta_{JK} = \Delta_K = \delta_J = \delta_K = 0$). A las bajas temperaturas del jet supersónico ($T_{\text{rot}} \approx 2 - 4\text{ K}$, $J \le 25$), la fuerza centrífuga es despreciable, por lo que programas clásicos como **JB95** resuelven el Carbazol con el modelo de Rotor Rígido.
+                                  * **Hamiltoniano de Watson (Reducción A):** Añade los 5 términos cuárticos de distorsión centrífuga para corregir el estiramiento de enlaces cuando se pueblan niveles $J$ muy altos.
+                                """
+                            )
 
             # =========================================================================
             # TAB 2: AJUSTE AUTÓNOMO POR EVOLUCIÓN DIFERENCIAL
@@ -687,15 +1058,25 @@ def build_gradio_app():
                 gr.Markdown(
                     """
                     ### Motor de Problema Inverso sin Asignación Manual
-                    Prueba cómo el algoritmo híbrido de **Evolución Diferencial + Simplex** deduce las constantes del estado excitado (A′, B′, C′) partiendo de valores iniciales erróneos sobre un espectro experimental con ruido.
+                    El algoritmo híbrido de **Evolución Diferencial + Simplex** deduce las constantes del estado excitado $(A', B', C')$ partiendo de valores iniciales erróneos, permitiendo elegir el **Modelo Hamiltoniano (Rotor Rígido vs. Watson)** y el **Criterio de Selección (Tipo a, b, c o Híbrido)**.
                     """
                 )
                 with gr.Row():
                     with gr.Column(scale=1):
                         fit_mol = gr.Dropdown(
                             choices=list(PRESETS.keys())[:9],
-                            value="Carbazol (Álvarez-Valtierra & Pratt 2006 | Jet LIF)",
-                            label="Molécula Objetivo (Literatura / JPL)"
+                            value="Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)",
+                            label="1. Molécula Objetivo (Incluye Carbazol Dr. Leonardo)"
+                        )
+                        fit_band_dropdown = gr.Dropdown(
+                            choices=BAND_TYPE_CHOICES,
+                            value=BAND_TYPE_CHOICES[0],
+                            label="2. Criterio de Selección Espectral (Tipo a / b / c / Híbrido)"
+                        )
+                        fit_ham_dropdown = gr.Dropdown(
+                            choices=HAMILTONIAN_CHOICES,
+                            value=HAMILTONIAN_CHOICES[0],
+                            label="3. Modelo Hamiltoniano durante el Ajuste"
                         )
                         fit_noise = gr.Slider(0.5, 10.0, value=3.0, step=0.5, label="Ruido Experimental Gaussiano (%)")
                         fit_iter = gr.Slider(5, 30, value=12, step=1, label="Generaciones Evolutivas (Iteraciones)")
@@ -703,16 +1084,16 @@ def build_gradio_app():
 
                     with gr.Column(scale=2):
                         fit_plot_out = gr.Plot(label="Convergencia del Contorno y Espectro de Residuales")
-                        fit_report_out = gr.Textbox(label="Parámetros Moleculares Recuperados vs. Literatura", lines=7)
+                        fit_report_out = gr.Textbox(label="Parámetros Moleculares Recuperados vs. Referencia Experimental", lines=8)
 
             # =========================================================================
             # TAB 3: QUÍMICA CUÁNTICA 3D & DIBUJO MOLECULAR (TENSOR DE INERCIA -> A,B,C)
             # =========================================================================
             with gr.TabItem("🧪 3. Constructor Molecular 3D & Química Cuántica (GPU)", id="tab_qchem"):
                 gr.Markdown(
-                    """
-                    ### Del Dibujo Molecular o Nombre Químico a las Constantes Rotacionales (A, B, C) en Segundos
-                    Dibuja una molécula, elige una del catálogo (incluyendo **H₂O, CO₂, SO₂, H₂CO, Indol, Carbazol, Resveratrol**) o escribe su **nombre químico / código SMILES**. El motor optimiza la geometría 3D, diagonaliza el **Tensor de Inercia Isotópico**, obtiene **(A, B, C)** y el **Defecto de Inercia (ΔI)**, y los valida automáticamente contra bases experimentales (**HITRAN / JPL / Literatura**).
+                    r"""
+                    ### Del Dibujo Molecular o Nombre Químico a las Constantes Rotacionales (A, B, C), Factor κ y Dipolo (μ)
+                    Dibuja una molécula, elige una del catálogo (incluyendo **Carbazol, H₂O, CO₂, SO₂, H₂CO, Indol, Resveratrol**) o escribe su **nombre químico / código SMILES**. El motor optimiza la geometría 3D, diagonaliza el **Tensor de Inercia Isotópico**, obtiene **(A, B, C)**, el **Parámetro de Asimetría de Ray ($\kappa$)** y el **Momento Dipolar ($\vec{\mu}$)**, validándolos contra literatura experimental.
                     """
                 )
                 with gr.Row():
@@ -724,7 +1105,7 @@ def build_gradio_app():
                         )
                         q_input = gr.Textbox(
                             value="c1ccc2c(c1)[nH]c3ccccc23",
-                            label="2. Código SMILES o Nombre (ej. Agua, CO2, SO2, Formaldehído, Indol, Cafeína)",
+                            label="2. Código SMILES o Nombre (ej. Carbazol, Agua, CO2, SO2, Formaldehído, Indol)",
                             placeholder="Escribe nombre químico o pega el SMILES aquí..."
                         )
                         q_engine = gr.Dropdown(
@@ -740,7 +1121,7 @@ def build_gradio_app():
                             q_confs = gr.Slider(1, 30, value=10, step=1, label="Búsqueda Conformacional (N Confórmeros)")
                             q_s1_exp = gr.Slider(0.2, 3.0, value=1.2, step=0.1, label="Expansión Aromática S₁ π→π* (%)")
 
-                        btn_qchem = gr.Button("🧪 Optimizar Geometría 3D y Calcular Constantes (A, B, C)", variant="primary", size="lg")
+                        btn_qchem = gr.Button("🧪 Optimizar Geometría 3D y Calcular Constantes (A, B, C, κ, μ)", variant="primary", size="lg")
                         btn_send_sim = gr.Button("⚡ Enviar (A, B, C, μ) Calculados al Simulador de Espectros (Pestaña 1)", variant="secondary")
 
                         with gr.Accordion("✏️ Pizarra Interactiva 2D: Dibuja Enlaces y Anillos Manualmente", open=False):
@@ -750,31 +1131,37 @@ def build_gradio_app():
                     with gr.Column(scale=2):
                         q_plot_out = gr.Plot(label="Proyección en Ejes Principales de Inercia (a, b) y Constantes Rotacionales")
                         q_3d_out = gr.HTML(label="Visor Molecular 3D Interactivo (WebGL) con Ejes Principales a, b, c y Dipolo μ")
-                        q_report_out = gr.Textbox(label="Reporte del Tensor de Inercia, Defecto Cuántico ΔI y Validación HITRAN/JPL", lines=9)
+                        q_report_out = gr.Textbox(label="Reporte del Tensor de Inercia, Factor κ, Dipolo μ y Validación Experimental", lines=10)
 
                         # Hidden state boxes holding the computed constants so they can be transferred to Tab 1
                         with gr.Row(visible=False):
-                            calc_a0 = gr.Number(value=2178.60)
-                            calc_b0 = gr.Number(value=1251.20)
-                            calc_c0 = gr.Number(value=794.50)
-                            calc_a1 = gr.Number(value=2145.30)
-                            calc_b1 = gr.Number(value=1242.10)
-                            calc_c1 = gr.Number(value=788.90)
-                            calc_mua = gr.Number(value=1.0)
-                            calc_mub = gr.Number(value=0.0)
+                            calc_a0 = gr.Number(value=2253.24)
+                            calc_b0 = gr.Number(value=594.21)
+                            calc_c0 = gr.Number(value=470.37)
+                            calc_a1 = gr.Number(value=2250.61)
+                            calc_b1 = gr.Number(value=586.35)
+                            calc_c1 = gr.Number(value=465.29)
+                            calc_mua = gr.Number(value=0.0)
+                            calc_mub = gr.Number(value=1.0)
                             calc_muc = gr.Number(value=0.0)
 
         # Callbacks for Tab 1
-        preset_numeric_outputs = [a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax]
+        preset_outputs = [
+            a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax,
+            band_type_dropdown, hamiltonian_dropdown, exp_source_dropdown
+        ]
         view_controls = [
-            show_sim_chk, overlay_exp_chk, mirror_exp_chk,
+            show_subbands_chk, show_sim_chk, overlay_exp_chk, mirror_exp_chk,
             alpha_sim_slider, alpha_exp_slider, offset_exp_slider,
             zoom_x_slider, pan_x_slider, zoom_y_slider, pan_y_slider
         ]
         all_sim_inputs = [
             a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax,
             preset_dropdown,
-            show_sim_chk, overlay_exp_chk, mirror_exp_chk,
+            band_type_dropdown, hamiltonian_dropdown,
+            dJ_in, dJK_in, dK_in, delJ_in, delK_in,
+            exp_source_dropdown, exp_file_upload,
+            show_subbands_chk, show_sim_chk, overlay_exp_chk, mirror_exp_chk,
             alpha_sim_slider, alpha_exp_slider, offset_exp_slider,
             zoom_x_slider, pan_x_slider, zoom_y_slider, pan_y_slider
         ]
@@ -782,7 +1169,47 @@ def build_gradio_app():
         preset_dropdown.change(
             fn=load_preset_values,
             inputs=[preset_dropdown],
-            outputs=preset_numeric_outputs
+            outputs=preset_outputs
+        ).then(
+            fn=simulate_rovibronic_spectrum,
+            inputs=all_sim_inputs,
+            outputs=[plot_out, stats_out]
+        )
+
+        band_type_dropdown.change(
+            fn=on_band_mode_change,
+            inputs=[band_type_dropdown],
+            outputs=[mu_a, mu_b, mu_c]
+        ).then(
+            fn=simulate_rovibronic_spectrum,
+            inputs=all_sim_inputs,
+            outputs=[plot_out, stats_out]
+        )
+
+        hamiltonian_dropdown.change(
+            fn=simulate_rovibronic_spectrum,
+            inputs=all_sim_inputs,
+            outputs=[plot_out, stats_out]
+        )
+
+        exp_source_dropdown.change(
+            fn=simulate_rovibronic_spectrum,
+            inputs=all_sim_inputs,
+            outputs=[plot_out, stats_out]
+        )
+
+        btn_load_exp.click(
+            fn=handle_uploaded_exp_file,
+            inputs=[
+                exp_file_upload,
+                a0, b0, c0, a1, b1, c1,
+                band_type_dropdown, hamiltonian_dropdown, fwhm
+            ],
+            outputs=[
+                a0, b0, c0, a1, b1, c1,
+                band_type_dropdown, hamiltonian_dropdown, exp_source_dropdown,
+                upload_status_out
+            ]
         ).then(
             fn=simulate_rovibronic_spectrum,
             inputs=all_sim_inputs,
@@ -821,7 +1248,7 @@ def build_gradio_app():
         # Callbacks for Tab 2
         btn_fit.click(
             fn=run_autonomous_fit_demo,
-            inputs=[fit_mol, fit_noise, fit_iter],
+            inputs=[fit_mol, fit_band_dropdown, fit_ham_dropdown, fit_noise, fit_iter],
             outputs=[fit_plot_out, fit_report_out]
         )
 
@@ -849,14 +1276,22 @@ def build_gradio_app():
             outputs=qchem_outputs
         )
 
-        # Transfer calculated (A, B, C, mu) from Tab 3 directly to Tab 1 and simulate spectrum!
+        # Transfer calculated (A, B, C, mu) from Tab 3 directly to Tab 1 and select matching band type!
         def transfer_to_tab1(ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc):
-            return ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc, True, False, gr.Tabs(selected="tab_sim")
+            if cmub >= 0.90:
+                bmode = BAND_TYPE_CHOICES[0]
+            elif cmua >= 0.90:
+                bmode = BAND_TYPE_CHOICES[1]
+            elif cmuc >= 0.90:
+                bmode = BAND_TYPE_CHOICES[2]
+            else:
+                bmode = BAND_TYPE_CHOICES[3]
+            return ca0, cb0, cc0, ca1, cb1, cc1, cmua, cmub, cmuc, bmode, True, False, gr.Tabs(selected="tab_sim")
 
         btn_send_sim.click(
             fn=transfer_to_tab1,
             inputs=[calc_a0, calc_b0, calc_c0, calc_a1, calc_b1, calc_c1, calc_mua, calc_mub, calc_muc],
-            outputs=[a0, b0, c0, a1, b1, c1, mu_a, mu_b, mu_c, show_sim_chk, overlay_exp_chk, main_tabs]
+            outputs=[a0, b0, c0, a1, b1, c1, mu_a, mu_b, mu_c, band_type_dropdown, show_sim_chk, overlay_exp_chk, main_tabs]
         ).then(
             fn=simulate_rovibronic_spectrum,
             inputs=all_sim_inputs,

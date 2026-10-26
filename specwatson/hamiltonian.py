@@ -43,12 +43,46 @@ class MoleculeState:
         """Method alias for Ray's asymmetry parameter kappa."""
         return self.kappa
 
+    @property
+    def is_rigid_rotor(self) -> bool:
+        """Returns True if all Watson centrifugal distortion constants are zero (Pure Rigid Rotor)."""
+        return (
+            abs(self.Delta_J)
+            + abs(self.Delta_JK)
+            + abs(self.Delta_K)
+            + abs(self.delta_J)
+            + abs(self.delta_K)
+        ) < 1e-12
+
+    @property
+    def model_description(self) -> str:
+        """Returns human-readable description of the Hamiltonian model in use."""
+        if self.is_rigid_rotor:
+            return "Rotor Rígido Puro (3 constantes: A, B, C | Sin distorsión centrífuga)"
+        return "Hamiltoniano Efectivo de Watson Reducción A (con distorsión centrífuga cuártica)"
+
+    @property
+    def kappa_classification(self) -> str:
+        """Returns physical interpretation of Ray's asymmetry parameter kappa."""
+        k = self.kappa
+        if k <= -0.98:
+            return "Trompo Cuasi-Simétrico Prolato Extremo (forma de cigarro/aguja, A ≫ B ≈ C)"
+        elif k <= -0.60:
+            return "Rotor Asimétrico Prolato (alargado en el eje a, A > B ≈ C)"
+        elif k < 0.60:
+            return "Rotor de Alta Asimetría Intermedia (A > B > C)"
+        elif k < 0.98:
+            return "Rotor Asimétrico Oblato (aplanado tipo disco, A ≈ B > C)"
+        else:
+            return "Trompo Cuasi-Simétrico Oblato Extremo (tipo disco/moneda, A ≈ B ≫ C)"
 
 
 class AsymmetricRotorHamiltonian:
     """
     Constructs and diagonalizes the asymmetric rotor Hamiltonian in the 
     symmetric top basis |J, K, M> using the I^r representation.
+    Enforces exact Wang parity (D2 four-group symmetry) on degenerate K-doublets
+    so that Type a, Type b, and Type c selection rules never mix.
     """
 
     def __init__(self, state: MoleculeState):
@@ -119,7 +153,8 @@ class AsymmetricRotorHamiltonian:
 
     def solve_j(self, J: int) -> Tuple[np.ndarray, np.ndarray, List[Tuple[int, int]]]:
         """
-        Diagonalizes the Hamiltonian for angular momentum J.
+        Diagonalizes the Hamiltonian for angular momentum J and enforces exact Wang
+        symmetrization on degenerate asymmetry doublets.
         Returns:
             energies: Array of 2J+1 eigenvalues sorted in ascending order (MHz).
             eigenvectors: (2J+1, 2J+1) matrix where column i is the eigenvector for energy i.
@@ -127,15 +162,48 @@ class AsymmetricRotorHamiltonian:
         """
         H = self.build_matrix(J)
         energies, vectors = np.linalg.eigh(H)
-        
-        # Label each state with (Ka, Kc)
-        # In asymmetric rotor notation:
-        # For a given J, there are 2J+1 levels, conventionally ordered by energy:
-        # tau = Ka - Kc, running from -J to +J.
-        # Prolate limit (kappa = -1): Ka = |K|, ordered by Ka = 0, 1, 1, 2, 2, ..., J, J
-        # Oblate limit (kappa = +1): Kc = |K|, ordered by Kc = J, J, J-1, J-1, ..., 0
         labels = self._assign_quantum_labels(J, energies)
-        
+
+        # Symmetrize nearly degenerate K-doublets into exact Wang states (+/- parity under K -> -K)
+        dim = 2 * J + 1
+        i = 0
+        while i < dim:
+            Ka, Kc = labels[i]
+            if (
+                i + 1 < dim
+                and labels[i + 1][0] == Ka
+                and Ka > 0
+                and abs(energies[i + 1] - energies[i]) < 1e-3
+            ):
+                u1 = vectors[:, i].copy()
+                u2 = vectors[:, i + 1].copy()
+
+                # Symmetric combination (+): v(-K) = +v(K)
+                v_plus = u1 + u1[::-1]
+                n_plus = np.linalg.norm(v_plus)
+                if n_plus < 1e-6:
+                    v_plus = u2 + u2[::-1]
+                    n_plus = np.linalg.norm(v_plus)
+                if n_plus > 0:
+                    v_plus /= n_plus
+
+                # Antisymmetric combination (-): v(-K) = -v(K)
+                v_minus = u1 - u1[::-1]
+                n_minus = np.linalg.norm(v_minus)
+                if n_minus < 1e-6:
+                    v_minus = u2 - u2[::-1]
+                    n_minus = np.linalg.norm(v_minus)
+                if n_minus > 0:
+                    v_minus /= n_minus
+
+                # In I^r representation: gamma = (J + Ka + Kc) % 2
+                gamma_i = (J + Ka + Kc) % 2
+                vectors[:, i] = v_minus if gamma_i == 1 else v_plus
+                vectors[:, i + 1] = v_plus if gamma_i == 1 else v_minus
+                i += 2
+            else:
+                i += 1
+
         return energies, vectors, labels
 
     def _assign_quantum_labels(self, J: int, sorted_energies: np.ndarray) -> List[Tuple[int, int]]:
@@ -147,9 +215,6 @@ class AsymmetricRotorHamiltonian:
         labels = []
         for i in range(2 * J + 1):
             tau = -J + i
-            # Standard relation:
-            # If (J - tau) is even: Ka + Kc = J
-            # If (J - tau) is odd:  Ka + Kc = J + 1
             if (J - tau) % 2 == 0:
                 Ka_plus_Kc = J
             else:

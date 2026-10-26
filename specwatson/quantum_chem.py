@@ -163,7 +163,7 @@ EXPERIMENTAL_LITERATURE_DB: Dict[str, Dict[str, object]] = {
     },
     "C12H9N": {
         "name": "Carbazol",
-        "A0": 2178.60, "B0": 1251.20, "C0": 794.50,
+        "A0": 2253.24, "B0": 594.21, "C0": 470.37,
         "ref": "Álvarez-Valtierra & Pratt, J. Chem. Phys. 124 (2006)"
     },
     "C8H7N": {

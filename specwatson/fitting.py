@@ -28,7 +28,8 @@ class ContourFitter:
         J_max: int = 15,
         fwhm_mhz: float = 30.0,
         temperature_K: float = 5.0,
-        dipole_fractions: Tuple[float, float, float] = (1.0, 0.0, 0.0)
+        dipole_fractions: Tuple[float, float, float] = (1.0, 0.0, 0.0),
+        selection_criterion: Optional[str] = None
     ):
         # Normalize experimental data
         self.exp_freq = exp_freq_mhz
@@ -41,6 +42,7 @@ class ContourFitter:
         self.fwhm_mhz = fwhm_mhz
         self.temperature_K = temperature_K
         self.dipole_fractions = dipole_fractions
+        self.selection_criterion = selection_criterion
 
         # Precompute ground state manifold (fixed during excited state fit)
         g_ham = AsymmetricRotorHamiltonian(self.ground_state)
@@ -48,7 +50,6 @@ class ContourFitter:
 
     def _forward_model(self, A_p: float, B_p: float, C_p: float, origin_shift_mhz: float) -> np.ndarray:
         """Runs the forward quantum simulation for candidate excited state parameters."""
-        # Excited state setup
         exc_state = MoleculeState(
             name="S1_fit",
             A=A_p,
@@ -64,26 +65,24 @@ class ContourFitter:
         e_ham = AsymmetricRotorHamiltonian(exc_state)
         exc_manifold = e_ham.compute_manifold(self.J_max)
 
-        # Transitions
         calc = RovibronicTransitionCalculator(
             ground_manifold=self.ground_manifold,
             excited_manifold=exc_manifold,
             band_origin_cm1=self.initial_excited.origin,
             temperature_K=self.temperature_K,
-            dipole_fractions=self.dipole_fractions
+            dipole_fractions=self.dipole_fractions,
+            selection_criterion=self.selection_criterion
         )
         lines = calc.calculate_transitions(self.J_max, self.J_max)
 
         if not lines:
             return np.zeros_like(self.exp_freq)
 
-        # Apply origin shift directly to line frequencies for efficiency
         for line in lines:
             line.frequency_mhz += origin_shift_mhz
 
-        # Convolve
         sim = SpectrumSimulator(lines, fwhm_mhz=self.fwhm_mhz, profile="gaussian")
-        freq_range = (np.min(self.exp_freq), np.max(self.exp_freq))
+        freq_range = (float(np.min(self.exp_freq)), float(np.max(self.exp_freq)))
         _, sim_y = sim.simulate(grid_points=len(self.exp_freq), freq_range_mhz=freq_range)
 
         return sim_y
@@ -92,7 +91,6 @@ class ContourFitter:
         """RMS residual loss function between experimental and simulated contours."""
         A_p, B_p, C_p, origin_shift = params
         
-        # Enforce A >= B >= C physical constraint
         if not (A_p >= B_p >= C_p > 0):
             return 1e6
 
@@ -123,7 +121,7 @@ class ContourFitter:
             return 1.0
 
         corr = dot_prod / (norm_exp * norm_sim)
-        return float(-corr) # minimize negative correlation
+        return float(-corr)
 
     def fit_global(
         self,
