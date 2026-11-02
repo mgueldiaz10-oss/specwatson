@@ -62,6 +62,11 @@ MOLECULE_CATALOG: Dict[str, Dict[str, str]] = {
         "formula": "C12H9N",
         "notes": "Molécula insignia (Álvarez-Valtierra & Pratt, J. Chem. Phys. 2006)."
     },
+    "Trifenileno (C18H12 - Rotor Simétrico Oblato Plano D3h | Delgado-Jaime & Álvarez-Valtierra)": {
+        "smiles": "c1ccc2c(c1)c3ccccc3c4ccccc24",
+        "formula": "C18H12",
+        "notes": "PAH plano D3h: A = B ≈ 504.25 MHz, C = AB/(A+B) ≈ 252.12 MHz, κ = +1.00 (Oblato)."
+    },
     "trans-Resveratrol (C14H12O3 - Polifenol Estilbenoide)": {
         "smiles": "Oc1ccc(/C=C/c2cc(O)cc(O)c2)cc1",
         "formula": "C14H12O3",
@@ -166,6 +171,11 @@ EXPERIMENTAL_LITERATURE_DB: Dict[str, Dict[str, object]] = {
         "A0": 2253.24, "B0": 594.21, "C0": 470.37,
         "ref": "Álvarez-Valtierra & Pratt, J. Chem. Phys. 124 (2006)"
     },
+    "C18H12": {
+        "name": "Trifenileno (Rotor Simétrico Oblato Plano D₃h)",
+        "A0": 504.25, "B0": 504.25, "C0": 252.12,
+        "ref": "Geometría D3h Plana C = AB/(A+B) (Delgado-Jaime & Álvarez-Valtierra)"
+    },
     "C8H7N": {
         "name": "Indol",
         "A0": 3877.80, "B0": 1636.00, "C0": 1150.90,
@@ -266,6 +276,8 @@ def resolve_chemical_query(query: str) -> Tuple[str, str]:
         "nh3": "N",
         "carbazol": "c1ccc2c(c1)[nH]c3ccccc23",
         "carbazole": "c1ccc2c(c1)[nH]c3ccccc23",
+        "trifenileno": "c1ccc2c(c1)c3ccccc3c4ccccc24",
+        "triphenylene": "c1ccc2c(c1)c3ccccc3c4ccccc24",
         "resveratrol": "Oc1ccc(/C=C/c2cc(O)cc(O)c2)cc1",
         "indol": "c1ccc2[nH]ccc2c1",
         "indole": "c1ccc2[nH]ccc2c1",

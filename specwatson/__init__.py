@@ -20,6 +20,13 @@ from .io_parsers import (
     AssignedQuantumLine,
     AutoAssignmentResult,
 )
+from .asymrotor import (
+    asym_rotor,
+    asym_rotor_lines,
+    rotor_levels,
+    planar_top_c,
+    ray_kappa,
+)
 
-__version__ = "0.2.1"
-__author__ = "Miguel Diaz / Molecular Spectroscopy Lab (UGto)"
+__version__ = "0.3.0"
+__author__ = "Miguel Diaz · Dr. Leonardo Alvarez-Valtierra · Dr. Mario Ulises Delgado-Jaime"

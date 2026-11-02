@@ -28,6 +28,7 @@ from specwatson.transitions import RovibronicTransitionCalculator, WAVENUMBER_TO
 from specwatson.spectrum import SpectrumSimulator
 from specwatson.fitting import ContourFitter
 from specwatson.io_parsers import parse_spectrometer_file, auto_assign_spectrometer_lines
+from specwatson.asymrotor import asym_rotor, planar_top_c, ray_kappa
 from specwatson.quantum_chem import (
     MOLECULE_CATALOG,
     EXPERIMENTAL_LITERATURE_DB,
@@ -77,6 +78,18 @@ PRESETS = {
         "exp_source": EXP_SOURCE_CHOICES[0],     # PmtFla real
         "Jmax": 22,
         "ref": "Álvarez-Valtierra & Pratt, J. Chem. Phys. 125, 244309 (2006) | Datos Espectrómetro PmtFla / IAR.asc"
+    },
+    "Trifenileno (C18H12 — Rotor Simétrico Oblato Plano D3h | C = AB/(A+B), κ = +1.0)": {
+        "A0": 504.2500, "B0": 504.2500, "C0": 252.1250,
+        "A1": 500.0500, "B1": 500.0500, "C1": 250.0250,
+        "origin_mhz": 885000000.0,
+        "Trot": 3.0, "fwhm": 35.0,
+        "mu_a": 0.50, "mu_b": 0.50, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[3],
+        "ham_mode": HAMILTONIAN_CHOICES[0],
+        "exp_source": EXP_SOURCE_CHOICES[2],
+        "Jmax": 24,
+        "ref": "Proyecto Trifenileno (Delgado-Jaime & Álvarez-Valtierra) — Rotor Plano C = AB/(A+B)"
     },
     "trans-Resveratrol (Polifenol - Confórmero I Plano)": {
         "A0": 1684.50, "B0": 218.40, "C0": 193.35,
@@ -1076,6 +1089,422 @@ def load_preset_values(preset_name):
     )
 
 
+
+
+# =============================================================================
+# MODO ASYMROTOR (.mlx / MATLAB Dr. Mario Delgado-Jaime & Trifenileno)
+# =============================================================================
+ASYMROTOR_MLX_PRESETS = {
+    "Carbazol — Script Exacto Simulacion_RotorRigido.mlx (Dr. Mario sobre PmtFla)": {
+        "A": 2253.8000,   # 1721 + 532 + 0.8
+        "B": 594.0000,    # 532 + 124/2
+        "C": 470.8000,    # 532 - 124/2 + 0.8
+        "dA": -2.5700,    # 3.91 - 6.48
+        "dB": -7.8950,    # -6.48 - 2.83/2
+        "dC": -5.0650,    # -6.48 + 2.83/2
+        "Nu0": 923604613.0,
+        "Shift": 0.0,
+        "Temp": 3.2,
+        "Th": 90.0,
+        "Ph": 0.0,
+        "GW": 37.0,
+        "LW": 5.2,
+        "JMax": 50,
+        "Unit": "1 — MHz (Estándar)",
+        "SpinAxis": "2 — Eje b (Simetría C₂v Carbazol)",
+        "SpinOdd": 15.0 / 17.0,
+        "T2": 0.0,
+        "W2": 0.0,
+        "Int1": 9130.0,
+        "Offset": 0.071,
+        "planar_chk": False,
+        "oblate_chk": False,
+    },
+    "Carbazol — Constantes Refinadas JB95 IAR.asc (Dr. Leonardo sobre PmtFla)": {
+        "A": 2253.2409,
+        "B": 594.2103,
+        "C": 470.3670,
+        "dA": -2.6305,
+        "dB": -7.8621,
+        "dC": -5.0747,
+        "Nu0": 923604613.0295,
+        "Shift": 0.0,
+        "Temp": 2.623,
+        "Th": 90.0,
+        "Ph": 0.0,
+        "GW": 37.0,
+        "LW": 5.2,
+        "JMax": 50,
+        "Unit": "1 — MHz (Estándar)",
+        "SpinAxis": "2 — Eje b (Simetría C₂v Carbazol)",
+        "SpinOdd": 15.0 / 17.0,
+        "T2": 0.0,
+        "W2": 0.0,
+        "Int1": 9130.0,
+        "Offset": 0.071,
+        "planar_chk": False,
+        "oblate_chk": False,
+    },
+    "Trifenileno (C18H12) — Rotor Simétrico Oblato Plano D3h (C = AB/(A+B), κ = +1)": {
+        "A": 504.2500,
+        "B": 504.2500,
+        "C": 252.1250,
+        "dA": -4.2000,
+        "dB": -4.2000,
+        "dC": -2.1000,
+        "Nu0": 923604613.0,
+        "Shift": 0.0,
+        "Temp": 3.0,
+        "Th": 90.0,
+        "Ph": 0.0,
+        "GW": 35.0,
+        "LW": 5.0,
+        "JMax": 50,
+        "Unit": "1 — MHz (Estándar)",
+        "SpinAxis": "2 — Eje b (Simetría C₂v Carbazol)",
+        "SpinOdd": 1.0,
+        "T2": 0.0,
+        "W2": 0.0,
+        "Int1": 9130.0,
+        "Offset": 0.071,
+        "planar_chk": True,
+        "oblate_chk": True,
+    },
+}
+
+
+def load_asymrotor_mlx_preset(preset_choice):
+    default_k = list(ASYMROTOR_MLX_PRESETS.keys())[0]
+    p = ASYMROTOR_MLX_PRESETS.get(preset_choice, ASYMROTOR_MLX_PRESETS[default_k])
+    return (
+        p["A"], p["B"], p["C"],
+        p["dA"], p["dB"], p["dC"],
+        p["Nu0"], p["Shift"],
+        p["Temp"], p["Th"], p["Ph"],
+        p["GW"], p["LW"], p["JMax"],
+        p["Unit"], p["SpinAxis"], round(float(p["SpinOdd"]), 6),
+        p["T2"], p["W2"],
+        p["Int1"], p["Offset"],
+        p["planar_chk"], p["oblate_chk"]
+    )
+
+
+def apply_planar_oblate_constraints(A, B, C, dA, dB, dC, planar_chk, oblate_chk):
+    """Applies Oblate (B = A, dB = dA) and/or Planar Top (C = AB/(A+B)) constraints."""
+    A, B, C = float(A), float(B), float(C)
+    dA, dB, dC = float(dA), float(dB), float(dC)
+    if oblate_chk:
+        B = A
+        dB = dA
+    if planar_chk:
+        C = planar_top_c(A, B)
+        Au = A + dA
+        Bu = B + dB
+        Cu = planar_top_c(Au, Bu)
+        dC = Cu - C
+    return round(B, 5), round(C, 5), round(dB, 5), round(dC, 5)
+
+
+def _load_raw_xy_for_asymrotor(exp_choice_str, uploaded_file):
+    """Loads raw (x_mhz, y_raw, label_name) from PmtFla or an uploaded experimental scan."""
+    if "Subido" in str(exp_choice_str) and uploaded_file is not None:
+        up_path = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
+        ds = parse_spectrometer_file(up_path)
+        return ds.freq_mhz, ds.intensity_raw, ds.filename
+    raw = np.loadtxt(DEFAULT_PMTFLA_PATH)
+    return raw[:, 0], raw[:, 1], "PmtFla (Carbazol)"
+
+
+def run_asymrotor_mlx_ui(
+    preset_choice,
+    exp_choice_str,
+    uploaded_file,
+    plot_style_str,
+    A, B, C,
+    dA, dB, dC,
+    planar_chk, oblate_chk,
+    Nu0, Shift,
+    Temp, Th, Ph,
+    GW, LW, JMax,
+    unit_str, spin_axis_str, SpinOdd,
+    T2, W2,
+    Int1, Offset
+):
+    """
+    Executes Dr. Mario Ulises Delgado-Jaime's exact `asym_rotor` model
+    (`Simulacion_RotorRigido.mlx` / `AsymRotor.m`) and plots:
+      - Classic MATLAB Live Script (.mlx) view: black experimental dots + blue model curve
+        in raw PMT units (`Int1 * AsymRotor(...) + Offset`), OR
+      - Standard JCP Mirror View: Experimental on TOP (+Y) and Model + Quantum Sticks on BOTTOM (-Y).
+    """
+    plt.close("all")
+    try:
+        B_eff, C_eff, dB_eff, dC_eff = apply_planar_oblate_constraints(
+            A, B, C, dA, dB, dC, planar_chk, oblate_chk
+        )
+        A, B, C = float(A), float(B_eff), float(C_eff)
+        dA, dB, dC = float(dA), float(dB_eff), float(dC_eff)
+        Nu0, Shift = float(Nu0), float(Shift)
+        Temp = max(0.2, float(Temp))
+        Th, Ph = float(Th), float(Ph)
+        GW, LW = max(0.1, float(GW)), max(0.0, float(LW))
+        JMax = int(JMax)
+        Unit = int(str(unit_str).strip()[0]) if str(unit_str).strip()[0].isdigit() else 1
+        SpinAxis = int(str(spin_axis_str).strip()[0]) if str(spin_axis_str).strip()[0].isdigit() else 0
+        SpinOdd = float(SpinOdd)
+        T2, W2 = float(T2), float(W2)
+        Int1, Offset = float(Int1), float(Offset)
+
+        x_exp, y_exp, exp_name = _load_raw_xy_for_asymrotor(exp_choice_str, uploaded_file)
+
+        t0 = time.perf_counter()
+        y_unit, lines_dict = asym_rotor(
+            x_exp,
+            A, B, C,
+            dA, dB, dC,
+            Nu0 + Shift,
+            Temp, Th, Ph,
+            GW, LW,
+            JMax=JMax, Unit=Unit,
+            SpinAxis=SpinAxis, SpinOdd=SpinOdd,
+            T2=T2, W2=W2,
+            lines=True
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        model = Int1 * y_unit + Offset
+        residuals = y_exp - model
+        rms_err = float(np.sqrt(np.mean(residuals ** 2)))
+        corr_r = float(np.corrcoef(y_exp, model)[0, 1] * 100.0) if np.std(model) > 1e-12 else 0.0
+
+        rel_ghz = (x_exp - (Nu0 + Shift)) / 1000.0
+
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1, figsize=(11.0, 6.0), dpi=135,
+            gridspec_kw={"height_ratios": [3.2, 1.15]}, sharex=True
+        )
+
+        if "MATLAB" in str(plot_style_str) or ".mlx" in str(plot_style_str):
+            # Exact replica of Dr. Mario's Simulacion_RotorRigido.mlx plot:
+            # figure; plot((x-(nu0+Shift))/1000, y,'Marker','.','MarkerSize',10,'Color','k');
+            # hold on; plot((x-(nu0+Shift))/1000, model,'LineWidth',2)
+            ax1.plot(
+                rel_ghz, y_exp,
+                linestyle="none", marker=".", markersize=5.5, color="#0f172a", alpha=0.82,
+                label=f"Datos Experimentales '{exp_name}' (Puntos Negros .mlx)"
+            )
+            ax1.plot(
+                rel_ghz, model,
+                color="#0284c7", linewidth=1.85, alpha=0.95,
+                label=f"Modelo AsymRotor: Int1*AsymRotor(...) + Offset (r = {corr_r:.2f}%)"
+            )
+            ax1.axhline(Offset, color="#94a3b8", ls=":", lw=0.9, label=f"Línea Base Offset = {Offset:.4f}")
+            ax1.set_ylabel("Señal Detector PMT (Unidades Crudas)", fontsize=9.8)
+            ax1.set_title(
+                f"Vista Clásica Live Script (.mlx) Dr. Mario Delgado-Jaime · r = {corr_r:.2f}% | RMS = {rms_err:.4f}",
+                fontsize=10.8, fontweight="bold"
+            )
+        else:
+            # Standard JCP Mirror View (+Exp on top, -Model & Sticks on bottom)
+            y_exp_sub = np.clip(y_exp - Offset, 0.0, None)
+            exp_max = float(np.max(y_exp_sub)) if np.max(y_exp_sub) > 0 else 1.0
+            y_exp_norm = y_exp_sub / exp_max
+
+            mod_sub = np.clip(model - Offset, 0.0, None)
+            mod_max = float(np.max(mod_sub)) if np.max(mod_sub) > 0 else 1.0
+            y_mod_norm = mod_sub / mod_max
+
+            ax1.plot(rel_ghz, y_exp_norm, color="#ea580c", lw=1.25, label=f"Experimental '{exp_name}' (Arriba +Y)")
+            ax1.fill_between(rel_ghz, 0.0, y_exp_norm, color="#f97316", alpha=0.12)
+            ax1.plot(rel_ghz, -y_mod_norm, color="#1d4ed8", lw=1.35, label=f"Modelo AsymRotor Invertido (Abajo -Y | r = {corr_r:.2f}%)")
+            ax1.fill_between(rel_ghz, 0.0, -y_mod_norm, color="#3b82f6", alpha=0.15)
+
+            if lines_dict["Nu"].size > 0:
+                top_mask = lines_dict["I"] >= (0.04 * np.max(lines_dict["I"]))
+                st_ghz = (lines_dict["Nu"][top_mask] - (Nu0 + Shift)) / 1000.0
+                st_int = (lines_dict["I"][top_mask] / np.max(lines_dict["I"])) * 0.85
+                ax1.vlines(st_ghz, 0.0, -st_int, color="#059669", lw=0.75, alpha=0.65, label="Líneas Stick AsymRotor")
+
+            ax1.axhline(0.0, color="#1e293b", lw=1.0)
+            ax1.set_ylim(-1.12, 1.15)
+            ax1.set_ylabel("Intensidad Normalizada (+Exp / -Sim)", fontsize=9.8)
+            ax1.set_title(
+                f"Vista Espejo JCP con Motor AsymRotor (Dr. Mario Delgado-Jaime) · r = {corr_r:.2f}%",
+                fontsize=10.8, fontweight="bold"
+            )
+
+        ax1.axvline(0.0, color="#ef4444", ls="--", lw=0.85, alpha=0.7, label="Origen ν₀ + Shift")
+        ax1.legend(loc="upper right", fontsize=8.3, framealpha=0.92)
+        ax1.grid(True, ls="--", alpha=0.35)
+
+        # Bottom panel: Residuals (y_exp - model)
+        ax2.plot(rel_ghz, residuals, color="#475569", lw=0.9, alpha=0.85, label=f"Residual (y_exp - model) | RMS = {rms_err:.4f}")
+        ax2.axhline(0.0, color="#dc2626", ls="--", lw=0.85)
+        ax2.set_xlabel("Frecuencia Relativa (x - (ν₀ + Shift)) / 1000  [GHz]", fontsize=10.0)
+        ax2.set_ylabel("Residual", fontsize=9.5)
+        ax2.legend(loc="upper right", fontsize=8.0)
+        ax2.grid(True, ls="--", alpha=0.35)
+
+        fig.tight_layout()
+
+        # Compute Ray's kappa and planar top diagnostics
+        Au, Bu, Cu = A + dA, B + dB, C + dC
+        kappa_s0 = ray_kappa(A, B, C)
+        kappa_s1 = ray_kappa(Au, Bu, Cu)
+        c_planar_s0 = planar_top_c(A, B)
+        c_planar_s1 = planar_top_c(Au, Bu)
+        fV = 0.5346 * LW + np.sqrt(0.2166 * (LW ** 2) + (GW ** 2))
+
+        th_r, ph_r = np.deg2rad(Th), np.deg2rad(Ph)
+        mu2_a = float(np.cos(th_r) ** 2)
+        mu2_b = float((np.sin(th_r) * np.cos(ph_r)) ** 2)
+        mu2_c = float((np.sin(th_r) * np.sin(ph_r)) ** 2)
+
+        report_txt = "\n".join([
+            f"✅ MOTOR ASYMROTOR (Dr. Mario Ulises Delgado-Jaime) EJECUTADO EN {elapsed_ms:.1f} ms:",
+            f"• Estado Base S₀:   A″ = {A:.4f} MHz | B″ = {B:.4f} MHz | C″ = {C:.4f} MHz  (κ₀ = {kappa_s0:+.4f})",
+            f"• Diferencias Δ:    dA = {dA:+.4f} MHz | dB = {dB:+.4f} MHz | dC = {dC:+.4f} MHz",
+            f"• Estado Excit. S₁: A′ = {Au:.4f} MHz | B′ = {Bu:.4f} MHz | C′ = {Cu:.4f} MHz  (κ₁ = {kappa_s1:+.4f})",
+            "• Condición Rotor Plano Dr. Mario [C_plano = AB/(A+B)]:",
+            f"  └─ S₀: C_calc = {c_planar_s0:.4f} MHz (ΔC_defecto = {C - c_planar_s0:+.4f} MHz) | S₁: C′_calc = {c_planar_s1:.4f} MHz (ΔC′_defecto = {Cu - c_planar_s1:+.4f} MHz)",
+            f"• Orientación Dipolar (Θ={Th:.1f}°, Φ={Ph:.1f}°): μₐ²={mu2_a:.3f}, μ_b²={mu2_b:.3f}, μ_c²={mu2_c:.3f} | Voigt FWHM = {fV:.2f} MHz (GW={GW:.1f}, LW={LW:.1f} MHz)",
+            f"• Líneas Cuánticas Activas: {lines_dict['Nu'].size:,} transiciones | Correlación r = {corr_r:.2f}% | Error RMS = {rms_err:.4f}"
+        ])
+
+        code_snippet = "\n".join([
+            "# === 1. En Python (Google Colab / SpecWatson) ===",
+            "from asymrotor import asym_rotor",
+            "y_unit, lines = asym_rotor(",
+            f"    x, {A:.4f}, {B:.4f}, {C:.4f}, {dA:.4f}, {dB:.4f}, {dC:.4f},",
+            f"    {Nu0:.4f} + ({Shift:.4f}), {Temp:.3f}, {Th:.1f}, {Ph:.1f}, {GW:.2f}, {LW:.2f},",
+            f"    JMax={JMax}, Unit={Unit}, SpinAxis={SpinAxis}, SpinOdd={SpinOdd:.6f}, T2={T2:.2f}, W2={W2:.3f}, lines=True",
+            ")",
+            f"model = {Int1:.2f} * y_unit + {Offset:.4f}",
+            "",
+            "% === 2. En MATLAB Live Script (Simulacion_RotorRigido.mlx) ===",
+            f"model = {Int1:.2f}*AsymRotor(x, {A:.4f}, {B:.4f}, {C:.4f}, {dA:.4f}, {dB:.4f}, {dC:.4f}, ...",
+            f"        {Nu0:.4f} + ({Shift:.4f}), {Temp:.3f}, {Th:.1f}, {Ph:.1f}, {GW:.2f}, {LW:.2f}, {JMax}, {Unit}, {SpinAxis}, {SpinOdd:.6f}) + {Offset:.4f};"
+        ])
+
+        # Build top 100 strongest lines table from `lines_dict`
+        table_rows = []
+        if lines_dict["Nu"].size > 0:
+            order_int = np.argsort(lines_dict["I"])[::-1][:100]
+            type_map = {1: "A", 2: "B", 3: "C"}
+            for idx in order_int:
+                t_let = type_map.get(int(lines_dict["Type"][idx]), "B")
+                ju, kau, kcu = int(lines_dict["Ju"][idx]), int(lines_dict["Kau"][idx]), int(lines_dict["Kcu"][idx])
+                jl, kal, kcl = int(lines_dict["Jl"][idx]), int(lines_dict["Kal"][idx]), int(lines_dict["Kcl"][idx])
+                nu_val = float(lines_dict["Nu"][idx])
+                int_val = float(lines_dict["I"][idx])
+                elow_val = float(lines_dict["Elow"][idx])
+                table_rows.append([
+                    t_let,
+                    f"{ju} ({kau}, {kcu})",
+                    f"{jl} ({kal}, {kcl})",
+                    f"{nu_val:.4f}",
+                    f"{(nu_val - (Nu0 + Shift)):+.2f}",
+                    f"{int_val:.6f}",
+                    f"{elow_val:.2f}",
+                ])
+
+        return fig, B, C, dB, dC, report_txt, code_snippet, table_rows
+
+    except Exception as e:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.text(0.5, 0.5, f"Error en AsymRotor: {str(e)}", ha="center", color="red")
+        ax.axis("off")
+        return fig, B, C, dB, dC, f"Error detallado: {repr(e)}", "", []
+
+
+def optimize_asymrotor_mlx_ui(
+    preset_choice,
+    exp_choice_str,
+    uploaded_file,
+    plot_style_str,
+    A, B, C,
+    dA, dB, dC,
+    planar_chk, oblate_chk,
+    Nu0, Shift,
+    Temp, Th, Ph,
+    GW, LW, JMax,
+    unit_str, spin_axis_str, SpinOdd,
+    T2, W2,
+    Int1, Offset
+):
+    """
+    Refines (dA, dB, dC, Shift, Int1, Offset) against the experimental scan using
+    nonlinear least squares on `asym_rotor`, honoring `planar_chk` and `oblate_chk`.
+    """
+    from scipy.optimize import least_squares
+
+    x_exp, y_exp, _ = _load_raw_xy_for_asymrotor(exp_choice_str, uploaded_file)
+    B_eff, C_eff, dB_eff, dC_eff = apply_planar_oblate_constraints(
+        A, B, C, dA, dB, dC, planar_chk, oblate_chk
+    )
+    A, B, C = float(A), float(B_eff), float(C_eff)
+    dA, dB, dC = float(dA), float(dB_eff), float(dC_eff)
+    Nu0, Shift = float(Nu0), float(Shift)
+    Temp = max(0.2, float(Temp))
+    Th, Ph = float(Th), float(Ph)
+    GW, LW = max(0.1, float(GW)), max(0.0, float(LW))
+    Unit = int(str(unit_str).strip()[0]) if str(unit_str).strip()[0].isdigit() else 1
+    SpinAxis = int(str(spin_axis_str).strip()[0]) if str(spin_axis_str).strip()[0].isdigit() else 0
+    SpinOdd = float(SpinOdd)
+    T2, W2 = float(T2), float(W2)
+    Int1, Offset = float(Int1), float(Offset)
+
+    # Use fast JMax=22 during least-squares steps, then full JMax for final plot
+    j_fit = min(int(JMax) if int(JMax) > 0 else 25, 24)
+
+    def _eval_residuals(p_vec):
+        da_v, db_v, dc_v, sh_v = p_vec[0], p_vec[1], p_vec[2], p_vec[3]
+        _, _, db_c, dc_c = apply_planar_oblate_constraints(A, B, C, da_v, db_v, dc_v, planar_chk, oblate_chk)
+        y_u = asym_rotor(
+            x_exp, A, B, C, da_v, db_c, dc_c,
+            Nu0 + sh_v, Temp, Th, Ph, GW, LW,
+            JMax=j_fit, Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd, T2=T2, W2=W2, lines=False
+        )
+        # Solve linear scale Int1 and Offset analytically for every candidate (da, db, dc, shift)
+        M_lin = np.column_stack((y_u, np.ones_like(y_u)))
+        coef, _, _, _ = np.linalg.lstsq(M_lin, y_exp, rcond=None)
+        model_v = coef[0] * y_u + coef[1]
+        return y_exp - model_v
+
+    p0 = np.array([dA, dB, dC, Shift], dtype=float)
+    res_opt = least_squares(_eval_residuals, p0, diff_step=0.02, max_nfev=18)
+    da_opt, db_opt, dc_opt, sh_opt = res_opt.x
+    B_f, C_f, db_f, dc_f = apply_planar_oblate_constraints(A, B, C, da_opt, db_opt, dc_opt, planar_chk, oblate_chk)
+
+    y_u_final = asym_rotor(
+        x_exp, A, B_f, C_f, da_opt, db_f, dc_f,
+        Nu0 + sh_opt, Temp, Th, Ph, GW, LW,
+        JMax=int(JMax), Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd, T2=T2, W2=W2, lines=False
+    )
+    M_lin = np.column_stack((y_u_final, np.ones_like(y_u_final)))
+    coef, _, _, _ = np.linalg.lstsq(M_lin, y_exp, rcond=None)
+    int1_opt = max(1.0, float(coef[0]))
+    off_opt = float(coef[1])
+
+    fig, B_out, C_out, dB_out, dC_out, rep_txt, code_txt, tbl = run_asymrotor_mlx_ui(
+        preset_choice, exp_choice_str, uploaded_file, plot_style_str,
+        A, B_f, C_f, round(float(da_opt), 5), db_f, dc_f,
+        planar_chk, oblate_chk,
+        Nu0, round(float(sh_opt), 3),
+        Temp, Th, Ph, GW, LW, JMax,
+        unit_str, spin_axis_str, SpinOdd, T2, W2,
+        round(int1_opt, 2), round(off_opt, 5)
+    )
+    return (
+        fig,
+        B_out, C_out,
+        round(float(da_opt), 5), dB_out, dC_out,
+        round(float(sh_opt), 3),
+        round(int1_opt, 2), round(off_opt, 5),
+        rep_txt, code_txt, tbl
+    )
+
+
 def build_gradio_app():
     import gradio as gr
 
@@ -1428,6 +1857,131 @@ def build_gradio_app():
                             calc_mub = gr.Number(value=1.0)
                             calc_muc = gr.Number(value=0.0)
 
+
+            # =========================================================================
+            # TAB 4: MODO ASYMROTOR (.mlx / MATLAB Dr. Mario Delgado-Jaime & Trifenileno)
+            # =========================================================================
+            with gr.TabItem("📐 4. Modo AsymRotor (.mlx / MATLAB Dr. Mario & Trifenileno)", id="tab_asymrotor"):
+                gr.Markdown(
+                    r"""
+                    ### Motor Exacto `AsymRotor` (`AsymRotor.m` / `asymrotor.py` & `Simulacion_RotorRigido.mlx` — Dr. Mario Ulises Delgado-Jaime)
+                    Esta pestaña reproduce **exactamente los mismos controles, ecuaciones y estilo gráfico** del script de MATLAB [`Simulacion_RotorRigido.mlx`](file:///C:/Users/madia/Documents/antigravity/spect-watson/recursos/Simulacion_RotorRigido.mlx) y la función [`AsymRotor.m`](file:///C:/Users/madia/Documents/antigravity/spect-watson/recursos/AsymRotor.m), integrando además la restricción de **rotor plano ($C \approx \frac{AB}{A+B}$)** y el parámetro de asimetría de Ray ($\kappa$) para el **Trifenileno ($\text{C}_{18}\text{H}_{12}$)**.
+                    """
+                )
+                with gr.Row():
+                    ar_preset = gr.Dropdown(
+                        choices=list(ASYMROTOR_MLX_PRESETS.keys()),
+                        value=list(ASYMROTOR_MLX_PRESETS.keys())[0],
+                        label="1. Configuración Pre-cargada (.mlx Carbazol Dr. Mario / IAR.asc Dr. Leonardo / Trifenileno D3h)",
+                        scale=2
+                    )
+                    ar_exp_source = gr.Dropdown(
+                        choices=[
+                            "📡 Espectrómetro Pre-cargado: PmtFla (Carbazol)",
+                            "📤 Archivo Experimental Subido (Ej. Trifenileno / Nuevo Escaneo)"
+                        ],
+                        value="📡 Espectrómetro Pre-cargado: PmtFla (Carbazol)",
+                        label="2. Datos Experimentales (x, y)",
+                        scale=1
+                    )
+                    ar_plot_style = gr.Dropdown(
+                        choices=[
+                            "Vista Clásica MATLAB Live Script (.mlx): Puntos Negros Exp + Curva Azul Superpuesta",
+                            "Vista Espejo Estándar JCP: Experimental Arriba (+Y) vs. AsymRotor Abajo (-Y) + Sticks"
+                        ],
+                        value="Vista Clásica MATLAB Live Script (.mlx): Puntos Negros Exp + Curva Azul Superpuesta",
+                        label="3. Estilo de Visualización",
+                        scale=2
+                    )
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        gr.Markdown("#### Constantes Estado Base $S_0$ ($A, B, C$) y Diferencias Descorrelacionadas ($dA, dB, dC$)")
+                        with gr.Row():
+                            ar_A = gr.Number(value=2253.8000, label="A (MHz) [S₀]")
+                            ar_B = gr.Number(value=594.0000, label="B (MHz) [S₀]")
+                            ar_C = gr.Number(value=470.8000, label="C (MHz) [S₀]")
+                        with gr.Row():
+                            ar_dA = gr.Number(value=-2.5700, label="dA = A′ - A (MHz)")
+                            ar_dB = gr.Number(value=-7.8950, label="dB = B′ - B (MHz)")
+                            ar_dC = gr.Number(value=-5.0650, label="dC = C′ - C (MHz)")
+
+                        with gr.Row():
+                            ar_planar_chk = gr.Checkbox(
+                                value=False,
+                                label="📐 Restricción Molécula Plana (Dr. Mario): C = A·B / (A + B)"
+                            )
+                            ar_oblate_chk = gr.Checkbox(
+                                value=False,
+                                label="💿 Trompo Simétrico Oblato (Trifenileno): B = A, dB = dA (κ = +1)"
+                            )
+
+                        gr.Markdown(r"#### Origen ($\nu_0$), Calibración (`Shift`), Temperatura y Orientación Dipolar ($\Theta, \Phi$)")
+                        with gr.Row():
+                            ar_Nu0 = gr.Number(value=923604613.0, label="Nu0 (Origen de Banda, MHz)")
+                            ar_Shift = gr.Number(value=0.0, label="Shift (Corrimiento, MHz)")
+                            ar_Temp = gr.Number(value=3.2, label="Temp (Trot, K)")
+
+                        with gr.Row():
+                            ar_Th = gr.Slider(0.0, 90.0, value=90.0, step=1.0, label="Theta Θ (° desde eje a) [a:0°, b:90°, c:90°]")
+                            ar_Ph = gr.Slider(0.0, 90.0, value=0.0, step=1.0, label="Phi Φ (° de b hacia c) [a:0°, b:0°, c:90°]")
+
+                        gr.Markdown("#### Anchos Voigt Exacto FFT (`GW`, `LW`), Espín Nuclear $C_2$ y Escala Detector (`Int1`, `Offset`)")
+                        with gr.Row():
+                            ar_GW = gr.Number(value=37.0, label="GW (Gaussiano Doppler, MHz)")
+                            ar_LW = gr.Number(value=5.2, label="LW (Lorentziano Vida Media, MHz)")
+                            ar_JMax = gr.Number(value=50, label="JMax (0 = Automático)")
+
+                        with gr.Row():
+                            ar_SpinAxis = gr.Dropdown(
+                                choices=[
+                                    "0 — Ninguno (Sin pesos de espín)",
+                                    "1 — Eje a (Rotación C₂ sobre a)",
+                                    "2 — Eje b (Simetría C₂v Carbazol)",
+                                    "3 — Eje c (Rotación C₂ sobre c)"
+                                ],
+                                value="2 — Eje b (Simetría C₂v Carbazol)",
+                                label="SpinAxis (Eje C₂)"
+                            )
+                            ar_SpinOdd = gr.Number(value=round(15.0 / 17.0, 6), label="SpinOdd (Carbazol: 15/17 ≈ 0.882353)")
+
+                        with gr.Row():
+                            ar_Int1 = gr.Number(value=9130.0, label="Int1 (Área Integrada Detector)")
+                            ar_Offset = gr.Number(value=0.071, label="Offset (Línea Base Detector)")
+
+                        with gr.Accordion("⚙️ Opciones Avanzadas AsymRotor: Modelo de 2 Temperaturas (T2, W2), Unidades y Subir Archivo (Trifenileno)", open=False):
+                            with gr.Row():
+                                ar_Unit = gr.Dropdown(
+                                    choices=["1 — MHz (Estándar)", "2 — GHz", "3 — cm⁻¹"],
+                                    value="1 — MHz (Estándar)",
+                                    label="Unit (Unidades)"
+                                )
+                                ar_T2 = gr.Number(value=0.0, label="T2 (Segunda Temp. Haz, K)")
+                                ar_W2 = gr.Number(value=0.0, label="W2 (Peso de T2)")
+                            ar_upload_file = gr.File(
+                                label="Subir Archivo Experimental (Trifenileno o nuevo barrido: 2 columnas Frecuencia vs Intensidad)",
+                                file_count="single"
+                            )
+
+                        btn_ar_sim = gr.Button("⚡ Evaluar Modelo AsymRotor (.mlx / Python Exacto)", variant="primary", size="lg")
+                        btn_ar_fit = gr.Button("🔧 Optimizar Automáticamente (dA, dB, dC, Shift, Int1, Offset) sobre Datos", variant="secondary")
+
+                    with gr.Column(scale=2):
+                        ar_plot_out = gr.Plot(label="Simulación AsymRotor vs. Datos Experimentales + Residuales")
+                        ar_report_out = gr.Textbox(
+                            label="Diagnóstico Físico AsymRotor: Factor κ de Ray, Condición de Rotor Plano C = AB/(A+B) y Error RMS",
+                            lines=7
+                        )
+                        ar_code_out = gr.Textbox(
+                            label="Código Equivalente en Vivo (Listo para copiar a Google Colab en Python o a MATLAB Live Script .mlx)",
+                            lines=9
+                        )
+                        ar_table_out = gr.Dataframe(
+                            headers=["Tipo", "Nivel Sup (J' Ka' Kc')", "Nivel Inf (J'' Ka'' Kc'')", "Freq Abs (MHz)", "Δν Rel (MHz)", "Intensidad Norm", "E_low (MHz)"],
+                            label="Lista de Líneas Cuánticas Principales devueltas por `y, lines = asym_rotor(..., lines=True)`"
+                        )
+
+
         # Callbacks for Tab 1
         preset_outputs = [
             a0, b0, c0, a1, b1, c1, trot, fwhm, mu_a, mu_b, mu_c, jmax,
@@ -1579,6 +2133,10 @@ def build_gradio_app():
             fn=run_quantum_3d_tab,
             inputs=[q_input, q_engine, q_confs, q_s1_exp],
             outputs=qchem_outputs
+        ).then(
+            fn=run_asymrotor_mlx_ui,
+            inputs=ar_all_inputs,
+            outputs=ar_all_outputs
         )
 
         btn_qchem.click(
@@ -1606,6 +2164,62 @@ def build_gradio_app():
             fn=simulate_rovibronic_spectrum,
             inputs=all_sim_inputs,
             outputs=[plot_out, stats_out]
+        )
+
+        # Callbacks for Tab 4 (Modo AsymRotor Dr. Mario Delgado-Jaime)
+        ar_all_inputs = [
+            ar_preset, ar_exp_source, ar_upload_file, ar_plot_style,
+            ar_A, ar_B, ar_C, ar_dA, ar_dB, ar_dC,
+            ar_planar_chk, ar_oblate_chk,
+            ar_Nu0, ar_Shift, ar_Temp, ar_Th, ar_Ph,
+            ar_GW, ar_LW, ar_JMax,
+            ar_Unit, ar_SpinAxis, ar_SpinOdd,
+            ar_T2, ar_W2, ar_Int1, ar_Offset
+        ]
+        ar_all_outputs = [
+            ar_plot_out, ar_B, ar_C, ar_dB, ar_dC,
+            ar_report_out, ar_code_out, ar_table_out
+        ]
+
+        ar_preset.change(
+            fn=load_asymrotor_mlx_preset,
+            inputs=[ar_preset],
+            outputs=[
+                ar_A, ar_B, ar_C, ar_dA, ar_dB, ar_dC,
+                ar_Nu0, ar_Shift, ar_Temp, ar_Th, ar_Ph,
+                ar_GW, ar_LW, ar_JMax,
+                ar_Unit, ar_SpinAxis, ar_SpinOdd,
+                ar_T2, ar_W2, ar_Int1, ar_Offset,
+                ar_planar_chk, ar_oblate_chk
+            ]
+        ).then(
+            fn=run_asymrotor_mlx_ui,
+            inputs=ar_all_inputs,
+            outputs=ar_all_outputs
+        )
+
+        for ar_trig in [ar_plot_style, ar_exp_source, ar_planar_chk, ar_oblate_chk]:
+            ar_trig.change(
+                fn=run_asymrotor_mlx_ui,
+                inputs=ar_all_inputs,
+                outputs=ar_all_outputs
+            )
+
+        btn_ar_sim.click(
+            fn=run_asymrotor_mlx_ui,
+            inputs=ar_all_inputs,
+            outputs=ar_all_outputs
+        )
+
+        btn_ar_fit.click(
+            fn=optimize_asymrotor_mlx_ui,
+            inputs=ar_all_inputs,
+            outputs=[
+                ar_plot_out,
+                ar_B, ar_C, ar_dA, ar_dB, ar_dC,
+                ar_Shift, ar_Int1, ar_Offset,
+                ar_report_out, ar_code_out, ar_table_out
+            ]
         )
 
         # Run initial simulations on page load (Tab 1, Tab 2 Auto-Assigner, and Tab 3)
