@@ -368,7 +368,10 @@ def parse_spectrometer_file(
         unit_desc = "MHz"
 
     if subtract_baseline:
-        baseline = float(np.percentile(y_arr, 5.0))
+        p15 = float(np.percentile(y_arr, 15.0))
+        p05 = float(np.percentile(y_arr, 5.0))
+        # Use 15th percentile when PMT dark baseline is elevated (e.g. pmt-nFLa ~ 0.19)
+        baseline = p15 if (p05 > 0.10 * float(np.max(y_arr))) else p05
         y_clean = np.clip(y_arr - baseline, 0.0, None)
     else:
         y_clean = np.clip(y_arr, 0.0, None)
@@ -376,7 +379,12 @@ def parse_spectrometer_file(
     max_y = float(np.max(y_clean)) if np.max(y_clean) > 0 else 1.0
     y_norm = y_clean / max_y
 
-    if reference_origin_mhz is not None and reference_origin_mhz > 0:
+    # Only honor reference_origin_mhz if it actually lies near the scan range (within +-60 GHz)
+    if (
+        reference_origin_mhz is not None
+        and reference_origin_mhz > 0
+        and (freq_mhz[0] - 60000.0) <= float(reference_origin_mhz) <= (freq_mhz[-1] + 60000.0)
+    ):
         origin_mhz = float(reference_origin_mhz)
     else:
         weights = y_norm ** 2

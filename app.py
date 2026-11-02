@@ -613,6 +613,27 @@ def handle_uploaded_exp_file(
         )
 
 
+def on_asg_source_change(exp_file_choice):
+    """Automatically updates Tab 2 rotational constants and band origin when switching between PmtFla (Carbazol) and pmt-nFLa (Trifenileno)."""
+    if "pmt-nFLa" in str(exp_file_choice):
+        return (
+            504.2500, 504.2500, 252.1250,
+            500.7500, 500.7500, 250.3750,
+            910238257.8,
+            28.0,
+            BAND_TYPE_CHOICES[1],  # Tipo a / Simétrico en plano
+            12.0                   # Tolerancia MHz
+        )
+    return (
+        2253.2409, 594.2103, 470.3670,
+        2250.6104, 586.3482, 465.2923,
+        923604613.0295,
+        45.0,
+        BAND_TYPE_CHOICES[0],      # Tipo b Puro (Carbazol)
+        5.5
+    )
+
+
 def run_automatic_line_assignment_ui(
     exp_file_choice,
     uploaded_raw_file,
@@ -647,9 +668,21 @@ def run_automatic_line_assignment_ui(
             up_path = uploaded_raw_file.name if hasattr(uploaded_raw_file, "name") else str(uploaded_raw_file)
             exp_ds = parse_spectrometer_file(up_path, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
         elif "pmt-nFLa" in str(exp_file_choice) and os.path.exists(DEFAULT_PMTNFLA_PATH):
+            # If user switched to pmt-nFLa (Trifenileno) while Carbazole constants/origin were still in the boxes, auto-adapt!
+            if abs(origin_mhz - 923604613.0) < 1e6:
+                origin_mhz = 910238257.8
+            if abs(A0 - 2253.24) < 50.0:
+                A0, B0, C0 = 504.2500, 504.2500, 252.1250
+                A1, B1, C1 = 500.7500, 500.7500, 250.3750
             exp_ds = parse_spectrometer_file(DEFAULT_PMTNFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
         else:
+            if abs(origin_mhz - 910238257.8) < 1e6:
+                origin_mhz = 923604613.0295
             exp_ds = parse_spectrometer_file(DEFAULT_PMTFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
+
+        # Ensure origin_mhz is always inside or near the experimental scan window so the X-axis never stretches across THz
+        if origin_mhz < float(exp_ds.freq_mhz[0]) - 50000.0 or origin_mhz > float(exp_ds.freq_mhz[-1]) + 50000.0:
+            origin_mhz = float(exp_ds.origin_mhz)
 
         is_rigid = "Rotor Rígido" in str(ham_mode_str)
         dJ_val = 0.0 if is_rigid else 0.00025
@@ -759,6 +792,7 @@ def run_automatic_line_assignment_ui(
 
         ax1.axhline(0.0, color="#1e293b", lw=1.0)
         ax1.axvline(0.0, color="#ef4444", ls=":", lw=0.95, alpha=0.75, label="Origen de Banda ν₀")
+        ax1.set_xlim(float(rel_exp_ghz[0]), float(rel_exp_ghz[-1]))
         ax1.set_ylim(-1.12, 1.24)
         ax1.set_ylabel("Intensidad (+Exp Arriba / -Sim Abajo)", fontsize=9.8)
         ax1.set_title(
@@ -1537,7 +1571,7 @@ def build_gradio_app():
             # =========================================================================
             # TAB 1: SIMULACIÓN DIRECTA DE ESPECTROS (WANG) + ARCHIVOS ESPECTRÓMETRO
             # =========================================================================
-            with gr.TabItem("⚡ 1. Simulador Cuántico de Espectros (Rotor Rígido / Watson)", id="tab_sim"):
+            with gr.TabItem("⚡ 1. Simulador Cuántico", id="tab_sim"):
                 with gr.Row():
                     preset_dropdown = gr.Dropdown(
                         choices=list(PRESETS.keys()),
@@ -1698,12 +1732,12 @@ def build_gradio_app():
             # =========================================================================
             # TAB 2: ASIGNACIÓN AUTOMÁTICA DE LÍNEAS (.asc / JB95) & AJUSTE EVOLUTIVO
             # =========================================================================
-            with gr.TabItem("🎯 2. Asignación Automática de Líneas (.asc / JB95) & Ajuste Evolutivo", id="tab_fit"):
+            with gr.TabItem("🎯 2. Asignador de Líneas (.asc / JB95)", id="tab_fit"):
                 gr.Markdown(
-                    r"""
-                    ### A. Asignador Automático de Líneas Cuánticas (`A`, `B`, `C` $J' K_a' K_c' \leftarrow J'' K_a'' K_c''$) desde Espectrómetro Crudo (`PmtFla`)
-                    En programas clásicos como **JB95**, el usuario debía hacer clic manualmente pico por pico sobre el archivo crudo `PmtFla` para asignarle sus números cuánticos y generar el archivo `.asc` (`IAR.asc`).  
-                    Aquí **SpecWatson** detecta automáticamente los máximos experimentales con interpolación parabólica sub-MHz, los empareja con las transiciones cuánticas teóricas (`B J' Ka' Kc' ← J'' Ka'' Kc''`), calcula el error residual ($\nu_{\text{exp}} - \nu_{\text{calc}}$) y **genera el archivo `.asc` completo listo para descargar**.
+                    """
+                    ### A. Asignador Automático de Líneas Cuánticas (`A`, `B`, `C` · J′ Kₐ′ K_c′ ← J″ Kₐ″ K_c″) desde Espectrómetro Crudo (`PmtFla` / `pmt-nFLa`)
+                    En programas clásicos como **JB95**, el usuario debía hacer clic manualmente pico por pico sobre el archivo crudo (`PmtFla` o `pmt-nFLa`) para asignarle sus números cuánticos y generar el archivo `.asc` (`IAR.asc`).  
+                    Aquí **SpecWatson** detecta automáticamente los máximos experimentales con interpolación parabólica sub-MHz, los empareja con las transiciones cuánticas teóricas (`B J' Ka' Kc' ← J'' Ka'' Kc''`), calcula el error residual (**ν_exp − ν_calc**) y **genera el archivo `.asc` completo listo para descargar**.
                     """
                 )
                 with gr.Row():
@@ -1818,7 +1852,7 @@ def build_gradio_app():
             # =========================================================================
             # TAB 3: QUÍMICA CUÁNTICA 3D & DIBUJO MOLECULAR (TENSOR DE INERCIA -> A,B,C)
             # =========================================================================
-            with gr.TabItem("🧪 3. Constructor Molecular 3D & Química Cuántica (GPU)", id="tab_qchem"):
+            with gr.TabItem("🧪 3. Geometría 3D & Química Cuántica", id="tab_qchem"):
                 gr.Markdown(
                     r"""
                     ### Del Dibujo Molecular o Nombre Químico a las Constantes Rotacionales (A, B, C), Factor κ y Dipolo (μ)
@@ -1877,7 +1911,7 @@ def build_gradio_app():
             # =========================================================================
             # TAB 4: MODO ASYMROTOR (.mlx / MATLAB Dr. Mario Delgado-Jaime & Trifenileno)
             # =========================================================================
-            with gr.TabItem("📐 4. Modo AsymRotor (.mlx / MATLAB Dr. Mario & Trifenileno)", id="tab_asymrotor"):
+            with gr.TabItem("📐 4. Modo AsymRotor (Dr. Mario .mlx & Trifenileno)", id="tab_asymrotor"):
                 gr.Markdown(
                     r"""
                     ### Motor Exacto `AsymRotor` (`AsymRotor.m` / `asymrotor.py` & `Simulacion_RotorRigido.mlx` — Dr. Mario Ulises Delgado-Jaime)
@@ -2122,6 +2156,20 @@ def build_gradio_app():
         )
 
         # Callbacks for Tab 2
+        asg_source_dropdown.change(
+            fn=on_asg_source_change,
+            inputs=[asg_source_dropdown],
+            outputs=[
+                asg_a0, asg_b0, asg_c0,
+                asg_a1, asg_b1, asg_c1,
+                asg_origin, asg_fwhm, asg_band_mode, asg_tol
+            ]
+        ).then(
+            fn=run_automatic_line_assignment_ui,
+            inputs=asg_inputs,
+            outputs=asg_outputs
+        )
+
         btn_run_assign.click(
             fn=run_automatic_line_assignment_ui,
             inputs=asg_inputs,
