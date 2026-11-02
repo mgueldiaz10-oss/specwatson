@@ -2150,10 +2150,6 @@ def build_gradio_app():
             fn=run_quantum_3d_tab,
             inputs=[q_input, q_engine, q_confs, q_s1_exp],
             outputs=qchem_outputs
-        ).then(
-            fn=run_asymrotor_mlx_ui,
-            inputs=ar_all_inputs,
-            outputs=ar_all_outputs
         )
 
         btn_qchem.click(
@@ -2253,6 +2249,10 @@ def build_gradio_app():
             fn=run_quantum_3d_tab,
             inputs=[q_input, q_engine, q_confs, q_s1_exp],
             outputs=qchem_outputs
+        ).then(
+            fn=run_asymrotor_mlx_ui,
+            inputs=ar_all_inputs,
+            outputs=ar_all_outputs
         )
 
         gr.Markdown(
