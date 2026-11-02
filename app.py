@@ -42,6 +42,7 @@ from specwatson.quantum_chem import (
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PMTFLA_PATH = os.path.join(BASE_DIR, "recursos", "PmtFla")
 DEFAULT_IAR_ASC_PATH = os.path.join(BASE_DIR, "recursos", "IAR.asc")
+DEFAULT_PMTNFLA_PATH = os.path.join(BASE_DIR, "recursos", "pmt-nFLa")
 
 # Selection Rule Mode choices
 BAND_TYPE_CHOICES = [
@@ -60,6 +61,7 @@ HAMILTONIAN_CHOICES = [
 # Experimental Reference Source choices
 EXP_SOURCE_CHOICES = [
     "📡 Espectrómetro Real: PmtFla (Fluorescencia LIF Carbazol - Dr. Leonardo)",
+    "📡 Espectrómetro Real: pmt-nFLa (Fluorescencia LIF Trifenileno - Dr. Leonardo & Dr. Mario)",
     "📄 Ajuste JB95 Real: IAR.asc (2,705 líneas Tipo B Carbazol - Dr. Leonardo)",
     "📚 Referencia de Literatura del Sistema Molecular Seleccionado",
     "📤 Archivo Propio Subido (.asc, PmtFla, .dat, .txt, .csv)",
@@ -79,17 +81,17 @@ PRESETS = {
         "Jmax": 22,
         "ref": "Álvarez-Valtierra & Pratt, J. Chem. Phys. 125, 244309 (2006) | Datos Espectrómetro PmtFla / IAR.asc"
     },
-    "Trifenileno (C18H12 — Rotor Simétrico Oblato Plano D3h | C = AB/(A+B), κ = +1.0)": {
+    "Trifenileno (C18H12 — Rotor Simétrico Oblato Plano D3h | Datos Reales pmt-nFLa)": {
         "A0": 504.2500, "B0": 504.2500, "C0": 252.1250,
-        "A1": 500.0500, "B1": 500.0500, "C1": 250.0250,
-        "origin_mhz": 885000000.0,
-        "Trot": 3.0, "fwhm": 35.0,
-        "mu_a": 0.50, "mu_b": 0.50, "mu_c": 0.0,
-        "band_mode": BAND_TYPE_CHOICES[3],
+        "A1": 500.7500, "B1": 500.7500, "C1": 250.3750,
+        "origin_mhz": 910238257.8,
+        "Trot": 2.8, "fwhm": 28.0,
+        "mu_a": 1.0, "mu_b": 0.0, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[1],
         "ham_mode": HAMILTONIAN_CHOICES[0],
-        "exp_source": EXP_SOURCE_CHOICES[2],
-        "Jmax": 24,
-        "ref": "Proyecto Trifenileno (Delgado-Jaime & Álvarez-Valtierra) — Rotor Plano C = AB/(A+B)"
+        "exp_source": EXP_SOURCE_CHOICES[1],
+        "Jmax": 26,
+        "ref": "Datos Espectrómetro pmt-nFLa (Delgado-Jaime & Álvarez-Valtierra) — Rotor Plano C = AB/(A+B)"
     },
     "trans-Resveratrol (Polifenol - Confórmero I Plano)": {
         "A0": 1684.50, "B0": 218.40, "C0": 193.35,
@@ -370,6 +372,11 @@ def simulate_rovibronic_spectrum(
                 DEFAULT_PMTFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=923604613.0295
             )
             origin_mhz = exp_dataset.origin_mhz
+        elif "pmt-nFLa" in exp_src_str and os.path.exists(DEFAULT_PMTNFLA_PATH):
+            exp_dataset = parse_spectrometer_file(
+                DEFAULT_PMTNFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=910238257.8
+            )
+            origin_mhz = exp_dataset.origin_mhz
         elif "IAR.asc" in exp_src_str and os.path.exists(DEFAULT_IAR_ASC_PATH):
             exp_dataset = parse_spectrometer_file(
                 DEFAULT_IAR_ASC_PATH, fwhm_mhz=fwhm_mhz, grid_points=2500, reference_origin_mhz=923604613.0295
@@ -639,6 +646,8 @@ def run_automatic_line_assignment_ui(
         if "Subido" in str(exp_file_choice) and uploaded_raw_file is not None:
             up_path = uploaded_raw_file.name if hasattr(uploaded_raw_file, "name") else str(uploaded_raw_file)
             exp_ds = parse_spectrometer_file(up_path, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
+        elif "pmt-nFLa" in str(exp_file_choice) and os.path.exists(DEFAULT_PMTNFLA_PATH):
+            exp_ds = parse_spectrometer_file(DEFAULT_PMTNFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
         else:
             exp_ds = parse_spectrometer_file(DEFAULT_PMTFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
 
@@ -1145,30 +1154,31 @@ ASYMROTOR_MLX_PRESETS = {
         "planar_chk": False,
         "oblate_chk": False,
     },
-    "Trifenileno (C18H12) — Rotor Simétrico Oblato Plano D3h (C = AB/(A+B), κ = +1)": {
+    "Trifenileno (C18H12) — Espectro Real pmt-nFLa (Rotor Plano C = AB/(A+B), κ = +1)": {
         "A": 504.2500,
         "B": 504.2500,
         "C": 252.1250,
-        "dA": -4.2000,
-        "dB": -4.2000,
-        "dC": -2.1000,
-        "Nu0": 923604613.0,
+        "dA": -3.5000,
+        "dB": -3.5000,
+        "dC": -1.7500,
+        "Nu0": 910238257.8,
         "Shift": 0.0,
-        "Temp": 3.0,
-        "Th": 90.0,
+        "Temp": 2.8,
+        "Th": 0.0,
         "Ph": 0.0,
-        "GW": 35.0,
-        "LW": 5.0,
+        "GW": 26.0,
+        "LW": 3.0,
         "JMax": 50,
         "Unit": "1 — MHz (Estándar)",
-        "SpinAxis": "2 — Eje b (Simetría C₂v Carbazol)",
+        "SpinAxis": "0 — Ninguno (Sin pesos de espín)",
         "SpinOdd": 1.0,
         "T2": 0.0,
         "W2": 0.0,
-        "Int1": 9130.0,
-        "Offset": 0.071,
+        "Int1": 4200.0,
+        "Offset": 0.1937,
         "planar_chk": True,
         "oblate_chk": True,
+        "exp_src": "📡 Espectrómetro Pre-cargado: pmt-nFLa (Trifenileno Crudo)",
     },
 }
 
@@ -1176,7 +1186,9 @@ ASYMROTOR_MLX_PRESETS = {
 def load_asymrotor_mlx_preset(preset_choice):
     default_k = list(ASYMROTOR_MLX_PRESETS.keys())[0]
     p = ASYMROTOR_MLX_PRESETS.get(preset_choice, ASYMROTOR_MLX_PRESETS[default_k])
+    exp_s = p.get("exp_src", "📡 Espectrómetro Pre-cargado: PmtFla (Carbazol)")
     return (
+        exp_s,
         p["A"], p["B"], p["C"],
         p["dA"], p["dB"], p["dC"],
         p["Nu0"], p["Shift"],
@@ -1206,11 +1218,14 @@ def apply_planar_oblate_constraints(A, B, C, dA, dB, dC, planar_chk, oblate_chk)
 
 
 def _load_raw_xy_for_asymrotor(exp_choice_str, uploaded_file):
-    """Loads raw (x_mhz, y_raw, label_name) from PmtFla or an uploaded experimental scan."""
+    """Loads raw (x_mhz, y_raw, label_name) from PmtFla, pmt-nFLa, or an uploaded experimental scan."""
     if "Subido" in str(exp_choice_str) and uploaded_file is not None:
         up_path = uploaded_file.name if hasattr(uploaded_file, "name") else str(uploaded_file)
         ds = parse_spectrometer_file(up_path)
         return ds.freq_mhz, ds.intensity_raw, ds.filename
+    if "pmt-nFLa" in str(exp_choice_str) and os.path.exists(DEFAULT_PMTNFLA_PATH):
+        raw = np.loadtxt(DEFAULT_PMTNFLA_PATH)
+        return raw[:, 0], raw[:, 1], "pmt-nFLa (Trifenileno)"
     raw = np.loadtxt(DEFAULT_PMTFLA_PATH)
     return raw[:, 0], raw[:, 1], "PmtFla (Carbazol)"
 
@@ -1696,6 +1711,7 @@ def build_gradio_app():
                         asg_source_dropdown = gr.Dropdown(
                             choices=[
                                 "📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
+                                "📡 Espectrómetro Real Pre-cargado: pmt-nFLa (Trifenileno - Dr. Leonardo & Dr. Mario)",
                                 "📤 Usar Archivo Experimental Crudo Subido Abajo (.dat, PmtFla, .csv)"
                             ],
                             value="📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
@@ -1878,7 +1894,8 @@ def build_gradio_app():
                     ar_exp_source = gr.Dropdown(
                         choices=[
                             "📡 Espectrómetro Pre-cargado: PmtFla (Carbazol)",
-                            "📤 Archivo Experimental Subido (Ej. Trifenileno / Nuevo Escaneo)"
+                            "📡 Espectrómetro Pre-cargado: pmt-nFLa (Trifenileno Crudo)",
+                            "📤 Archivo Experimental Subido (Nuevo Escaneo)"
                         ],
                         value="📡 Espectrómetro Pre-cargado: PmtFla (Carbazol)",
                         label="2. Datos Experimentales (x, y)",
@@ -2185,6 +2202,7 @@ def build_gradio_app():
             fn=load_asymrotor_mlx_preset,
             inputs=[ar_preset],
             outputs=[
+                ar_exp_source,
                 ar_A, ar_B, ar_C, ar_dA, ar_dB, ar_dC,
                 ar_Nu0, ar_Shift, ar_Temp, ar_Th, ar_Ph,
                 ar_GW, ar_LW, ar_JMax,
