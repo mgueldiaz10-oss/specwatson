@@ -2460,5 +2460,8 @@ def build_gradio_app():
 
 
 if __name__ == "__main__":
+    import sys
+    in_colab = ("COLAB_RELEASE_TAG" in os.environ) or ("COLAB_GPU" in os.environ) or ("--share" in sys.argv)
     demo = build_gradio_app()
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=in_colab)
+
