@@ -496,3 +496,301 @@ def asym_rotor(
 
     y_out = yc.reshape(x_arr.shape)
     return (y_out, lines_out) if lines else y_out
+
+
+def convergent_grid_fit(
+    x_exp: np.ndarray,
+    y_exp: np.ndarray,
+    A: float, B: float, C: float,
+    dA: float, dB: float, dC: float,
+    Nu0: float,
+    Shift: float,
+    Trot: float,
+    Theta: float, Phi: float,
+    GW: float, LW: float,
+    JMax: int = 35,
+    Unit: int = 1,
+    SpinAxis: int = 0,
+    SpinOdd: float = 1.0,
+    T2: float = 0.0,
+    W2: float = 0.0,
+    planar_chk: bool = False,
+    oblate_chk: bool = False,
+    grid_size: int = 5,
+    n_levels: int = 3,
+    span_p1_mhz: float = 4.0,
+    span_p2_mhz: float = 4.0,
+    span_shift_mhz: float = 120.0,
+    contraction: float = 0.42,
+    polish_final: bool = True
+) -> Dict[str, object]:
+    """
+    Método de Rejilla Convergente Multinivel (Coarse-to-Fine Convergent Grid Search)
+    basado en la arquitectura de caché de `AsymRotor` (Dr. Mario Ulises Delgado-Jaime):
+
+        "On a grid over the rotational constants each grid point pays for one build,
+         and the fit at that point is cheap."
+
+    En cada nivel k = 1 .. n_levels:
+      1. Construye una malla 2D de (grid_size × grid_size) nodos alrededor de la mejor
+         solución del nivel previo:
+         - Si `oblate_chk` es True (ej. Trifenileno D3h, donde B=A y C=A/2):
+           barre p1 = A (Estado Base S0) y p2 = dA (Cambio S1 <- S0).
+         - Si `oblate_chk` es False (ej. Carbazol o rotor asimétrico general):
+           barre p1 = dA y p2 = dB, determinando dC mediante la condición plana
+           C' = A'B'/(A'+B') (si `planar_chk=True`) o conservando el defecto de inercia.
+      2. En cada nodo (p1, p2) evalúa `asym_rotor` UNA SOLA VEZ sobre una malla extendida
+         y barre instantáneamente 21 valores de corrimiento de calibración (`Shift`) junto
+         con la solución analítica exacta de mínimos cuadrados para `Int1` (>0) y `Offset`,
+         sin re-diagonalizar matrices ni repetir la FFT.
+      3. Contrae el radio de la rejilla por el factor `contraction` en cada nivel sucesivo
+         hasta converger al mínimo global y opcionalmente aplica un pulido sub-MHz final.
+    """
+    from scipy.optimize import least_squares
+
+    x_arr = np.asarray(x_exp, dtype=float).ravel()
+    y_arr = np.asarray(y_exp, dtype=float).ravel()
+
+    A0, B0, C0 = float(A), float(B), float(C)
+    dA0, dB0, dC0 = float(dA), float(dB), float(dC)
+    Nu0_f = float(Nu0)
+    Shift0 = float(Shift)
+
+    if oblate_chk:
+        B0 = A0
+        dB0 = dA0
+    if planar_chk:
+        C0 = planar_top_c(A0, B0)
+        dC0 = planar_top_c(A0 + dA0, B0 + dB0) - C0
+
+    # Defecto rotacional inicial en dC para cuando planar_chk es False
+    dc_planar_init = planar_top_c(A0 + dA0, B0 + dB0) - planar_top_c(A0, B0)
+    dc_defect_offset = dC0 - dc_planar_init
+
+    grid_size = max(3, min(int(grid_size), 11))
+    n_levels = max(1, min(int(n_levels), 6))
+    j_grid = min(int(JMax) if int(JMax) > 0 else 24, 22)
+
+    # Pre-calcular estadísticas de y_exp para regresión lineal analítica vectorizada
+    y_mean = float(np.mean(y_arr))
+    dy_exp = y_arr - y_mean
+    norm_dy_exp = float(np.linalg.norm(dy_exp)) + 1e-15
+
+    # Eje extendido uniforme para evaluar traslaciones de `Shift` por interpolación rápida
+    x_min, x_max = float(np.min(x_arr)), float(np.max(x_arr))
+    max_pad = max(250.0, abs(float(span_shift_mhz)) * 1.5)
+    n_pad = min(4500, max(2000, int((x_max - x_min + 2.0 * max_pad) / 2.5)))
+    x_pad = np.linspace(x_min - max_pad, x_max + max_pad, n_pad)
+
+    def _params_from_node(p1: float, p2: float) -> Tuple[float, float, float, float, float, float]:
+        if oblate_chk:
+            a_v = max(20.0, float(p1))
+            b_v = a_v
+            c_v = planar_top_c(a_v, b_v) if planar_chk else max(10.0, C0 * (a_v / max(A0, 1e-6)))
+            da_v = float(p2)
+            db_v = da_v
+            if planar_chk:
+                cu_v = planar_top_c(a_v + da_v, b_v + db_v)
+                dc_v = cu_v - c_v
+            else:
+                dc_v = 0.5 * da_v
+        else:
+            a_v, b_v = A0, B0
+            c_v = planar_top_c(a_v, b_v) if planar_chk else C0
+            da_v = float(p1)
+            db_v = float(p2)
+            if planar_chk:
+                dc_v = planar_top_c(a_v + da_v, b_v + db_v) - c_v
+            else:
+                dc_v = (planar_top_c(a_v + da_v, b_v + db_v) - planar_top_c(a_v, b_v)) + dc_defect_offset
+        return a_v, b_v, c_v, da_v, db_v, dc_v
+
+    node_cache: Dict[Tuple[float, float, float, float], Dict[str, float]] = {}
+
+    def _eval_node(p1: float, p2: float, sh_center: float, sh_span: float) -> Dict[str, float]:
+        cache_key = (round(p1, 6), round(p2, 6), round(sh_center, 3), round(sh_span, 3))
+        if cache_key in node_cache:
+            return node_cache[cache_key]
+
+        a_v, b_v, c_v, da_v, db_v, dc_v = _params_from_node(p1, p2)
+        if (a_v + da_v) <= 5.0 or (b_v + db_v) <= 5.0 or (c_v + dc_v) <= 5.0:
+            res_bad = {
+                "rms": 1e9, "corr": 0.0, "shift": sh_center,
+                "int1": 1.0, "offset": y_mean,
+                "A": a_v, "B": b_v, "C": c_v, "dA": da_v, "dB": db_v, "dC": dc_v
+            }
+            node_cache[cache_key] = res_bad
+            return res_bad
+
+        # Una sola llamada a `asym_rotor` en este nodo de la rejilla (con Shift = sh_center)
+        y_pad = asym_rotor(
+            x_pad, a_v, b_v, c_v, da_v, db_v, dc_v,
+            Nu0_f + sh_center, Trot, Theta, Phi, GW, LW,
+            JMax=j_grid, Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd, T2=T2, W2=W2, lines=False
+        )
+
+        # Barrer 21 desplazamientos finos de calibración (`Shift`) sin re-diagonalizar
+        deltas = np.linspace(-sh_span, sh_span, 21) if sh_span > 1e-4 else np.array([0.0])
+        best_rms = 1e9
+        best_corr = -1.0
+        best_sh = sh_center
+        best_int1 = 1.0
+        best_off = y_mean
+
+        for d_sh in deltas:
+            cand_sh = sh_center + float(d_sh)
+            y_s = np.interp(x_arr - float(d_sh), x_pad, y_pad)
+            ys_mean = float(np.mean(y_s))
+            dys = y_s - ys_mean
+            denom = float(np.dot(dys, dys))
+            if denom <= 1e-20:
+                continue
+            cov_xy = float(np.dot(dys, dy_exp))
+            int1_val = max(1e-3, cov_xy / denom)
+            off_val = y_mean - int1_val * ys_mean
+            resid = y_arr - (int1_val * y_s + off_val)
+            rms_val = float(np.sqrt(np.mean(resid ** 2)))
+            corr_val = float(cov_xy / (np.sqrt(denom) * norm_dy_exp)) * 100.0
+            if rms_val < best_rms:
+                best_rms = rms_val
+                best_corr = corr_val
+                best_sh = cand_sh
+                best_int1 = int1_val
+                best_off = off_val
+
+        out = {
+            "rms": best_rms,
+            "corr": best_corr,
+            "shift": best_sh,
+            "int1": best_int1,
+            "offset": best_off,
+            "A": a_v, "B": b_v, "C": c_v,
+            "dA": da_v, "dB": db_v, "dC": dc_v,
+        }
+        node_cache[cache_key] = out
+        return out
+
+    # Centros iniciales según modo de simetría
+    if oblate_chk:
+        cur_p1 = A0
+        cur_p2 = dA0
+        axis1_label = "A″ Basal S₀ (MHz)"
+        axis2_label = "dA = A′ - A″ (MHz)"
+    else:
+        cur_p1 = dA0
+        cur_p2 = dB0
+        axis1_label = "dA = A′ - A″ (MHz)"
+        axis2_label = "dB = B′ - B″ (MHz)"
+
+    cur_sh = Shift0
+    cur_span1 = max(0.05, float(span_p1_mhz))
+    cur_span2 = max(0.05, float(span_p2_mhz))
+    cur_sh_span = max(0.0, float(span_shift_mhz))
+
+    level_history = []
+    best_overall = None
+    total_grid_nodes = 0
+
+    for lv in range(1, n_levels + 1):
+        p1_vec = np.linspace(cur_p1 - cur_span1, cur_p1 + cur_span1, grid_size)
+        p2_vec = np.linspace(cur_p2 - cur_span2, cur_p2 + cur_span2, grid_size)
+        rms_mat = np.zeros((grid_size, grid_size), dtype=float)
+        corr_mat = np.zeros((grid_size, grid_size), dtype=float)
+
+        lv_best = None
+        lv_best_ij = (grid_size // 2, grid_size // 2)
+
+        for j_idx, p2_val in enumerate(p2_vec):
+            for i_idx, p1_val in enumerate(p1_vec):
+                total_grid_nodes += 1
+                node_res = _eval_node(float(p1_val), float(p2_val), cur_sh, cur_sh_span)
+                rms_mat[j_idx, i_idx] = node_res["rms"]
+                corr_mat[j_idx, i_idx] = node_res["corr"]
+                if lv_best is None or node_res["rms"] < lv_best["rms"]:
+                    lv_best = dict(node_res)
+                    lv_best["p1"] = float(p1_val)
+                    lv_best["p2"] = float(p2_val)
+                    lv_best_ij = (i_idx, j_idx)
+
+        cur_p1 = lv_best["p1"]
+        cur_p2 = lv_best["p2"]
+        cur_sh = lv_best["shift"]
+        if best_overall is None or lv_best["rms"] < best_overall["rms"]:
+            best_overall = dict(lv_best)
+
+        level_history.append({
+            "level": lv,
+            "p1_vec": p1_vec,
+            "p2_vec": p2_vec,
+            "rms_mat": rms_mat,
+            "corr_mat": corr_mat,
+            "span1": cur_span1,
+            "span2": cur_span2,
+            "step1": (2.0 * cur_span1) / max(1, grid_size - 1),
+            "step2": (2.0 * cur_span2) / max(1, grid_size - 1),
+            "best_p1": cur_p1,
+            "best_p2": cur_p2,
+            "best_shift": cur_sh,
+            "best_rms": lv_best["rms"],
+            "best_corr": lv_best["corr"],
+            "best_ij": lv_best_ij,
+        })
+
+        # Contraer la ventana para el siguiente nivel (Zoom-In Convergente)
+        cur_span1 *= float(contraction)
+        cur_span2 *= float(contraction)
+        cur_sh_span *= float(contraction)
+
+    # Pulido continuo sub-MHz final a partir del mejor punto de la Rejilla Convergente
+    if polish_final:
+        def _polish_res(vec):
+            nd = _eval_node(float(vec[0]), float(vec[1]), float(vec[2]), 0.0)
+            y_u = asym_rotor(
+                x_arr, nd["A"], nd["B"], nd["C"], nd["dA"], nd["dB"], nd["dC"],
+                Nu0_f + float(vec[2]), Trot, Theta, Phi, GW, LW,
+                JMax=j_grid, Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd, T2=T2, W2=W2, lines=False
+            )
+            M_lin = np.column_stack((y_u, np.ones_like(y_u)))
+            coef, _, _, _ = np.linalg.lstsq(M_lin, y_arr, rcond=None)
+            int_c = max(1e-3, float(coef[0]))
+            return y_arr - (int_c * y_u + float(coef[1]))
+
+        p_init = np.array([best_overall["p1"], best_overall["p2"], best_overall["shift"]], dtype=float)
+        lsq = least_squares(_polish_res, p_init, diff_step=0.01, max_nfev=12)
+        pol_node = _eval_node(float(lsq.x[0]), float(lsq.x[1]), float(lsq.x[2]), 0.0)
+        if pol_node["rms"] <= best_overall["rms"]:
+            pol_node["p1"] = float(lsq.x[0])
+            pol_node["p2"] = float(lsq.x[1])
+            best_overall = pol_node
+
+    # Evaluar con el JMax completo del usuario en el óptimo global encontrado
+    y_final = asym_rotor(
+        x_arr,
+        best_overall["A"], best_overall["B"], best_overall["C"],
+        best_overall["dA"], best_overall["dB"], best_overall["dC"],
+        Nu0_f + best_overall["shift"],
+        Trot, Theta, Phi, GW, LW,
+        JMax=int(JMax), Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd, T2=T2, W2=W2, lines=False
+    )
+    M_lin = np.column_stack((y_final, np.ones_like(y_final)))
+    coef, _, _, _ = np.linalg.lstsq(M_lin, y_arr, rcond=None)
+    final_int1 = max(1.0, float(coef[0]))
+    final_off = float(coef[1])
+    final_model = final_int1 * y_final + final_off
+    final_rms = float(np.sqrt(np.mean((y_arr - final_model) ** 2)))
+    final_corr = float(np.corrcoef(y_arr, final_model)[0, 1] * 100.0) if np.std(final_model) > 1e-12 else 0.0
+
+    best_overall["int1"] = final_int1
+    best_overall["offset"] = final_off
+    best_overall["rms"] = final_rms
+    best_overall["corr"] = final_corr
+
+    return {
+        "best": best_overall,
+        "levels": level_history,
+        "axis1_label": axis1_label,
+        "axis2_label": axis2_label,
+        "total_grid_nodes": total_grid_nodes,
+        "unique_hamiltonians": len(node_cache),
+    }
+

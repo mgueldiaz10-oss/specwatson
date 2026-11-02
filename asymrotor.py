@@ -11,6 +11,7 @@ from specwatson.asymrotor import (
     rotor_levels,
     planar_top_c,
     ray_kappa,
+    convergent_grid_fit,
 )
 
 __all__ = [
@@ -19,4 +20,6 @@ __all__ = [
     "rotor_levels",
     "planar_top_c",
     "ray_kappa",
+    "convergent_grid_fit",
 ]
+

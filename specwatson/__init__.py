@@ -26,6 +26,7 @@ from .asymrotor import (
     rotor_levels,
     planar_top_c,
     ray_kappa,
+    convergent_grid_fit,
 )
 
 __version__ = "0.3.0"

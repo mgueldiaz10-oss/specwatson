@@ -28,7 +28,7 @@ from specwatson.transitions import RovibronicTransitionCalculator, WAVENUMBER_TO
 from specwatson.spectrum import SpectrumSimulator
 from specwatson.fitting import ContourFitter
 from specwatson.io_parsers import parse_spectrometer_file, auto_assign_spectrometer_lines
-from specwatson.asymrotor import asym_rotor, planar_top_c, ray_kappa
+from specwatson.asymrotor import asym_rotor, planar_top_c, ray_kappa, convergent_grid_fit
 from specwatson.quantum_chem import (
     MOLECULE_CATALOG,
     EXPERIMENTAL_LITERATURE_DB,
@@ -1466,6 +1466,98 @@ def run_asymrotor_mlx_ui(
         return fig, B, C, dB, dC, f"Error detallado: {repr(e)}", "", []
 
 
+def plot_convergent_grid_figure(fit_res: dict, exp_name: str = "Datos Experimentales"):
+    """
+    Renders a 2-panel diagnostic figure of the Convergent Grid Method (Método de Rejilla Convergente):
+      - Left panel: Global Level-1 correlation landscape r(%) with nested bounding boxes for Levels L1..LK
+        and the trajectory of best nodes converging toward the global optimum.
+      - Right panel: Final zoomed-in Level-K RMS error surface around the converged minimum with star marker.
+    """
+    from matplotlib.patches import Rectangle
+
+    fig_g, (ax_l1, ax_lf) = plt.subplots(1, 2, figsize=(11.2, 4.4), dpi=135)
+
+    history = fit_res["levels"]
+    best_d = fit_res["best"]
+    lv1 = history[0]
+    lv_f = history[-1]
+
+    p1_l1 = lv1["p1_vec"]
+    p2_l1 = lv1["p2_vec"]
+    corr_l1 = lv1["corr_mat"]
+    p1_f = lv_f["p1_vec"]
+    p2_f = lv_f["p2_vec"]
+    rms_f = lv_f["rms_mat"]
+    p1_label = fit_res["axis1_label"]
+    p2_label = fit_res["axis2_label"]
+
+    # Panel 1: Global Level-1 Correlation Map + Nested Convergent Bounding Boxes
+    P1_1, P2_1 = np.meshgrid(p1_l1, p2_l1)
+    cf1 = ax_l1.contourf(P1_1, P2_1, corr_l1, levels=18, cmap="viridis")
+    cb1 = fig_g.colorbar(cf1, ax=ax_l1, pad=0.02)
+    cb1.set_label("Correlación Espectral r (%)", fontsize=8.5)
+
+    # Plot grid nodes of Level 1
+    ax_l1.scatter(P1_1.ravel(), P2_1.ravel(), s=14, c="white", edgecolors="#0f172a", alpha=0.65, lw=0.6, label="Nodos L₁")
+
+    level_colors = ["#38bdf8", "#facc15", "#fb923c", "#f43f5e", "#c084fc"]
+    traj_p1, traj_p2 = [], []
+    for idx_l, h in enumerate(history):
+        col = level_colors[idx_l % len(level_colors)]
+        p1_min, p1_max = float(np.min(h["p1_vec"])), float(np.max(h["p1_vec"]))
+        p2_min, p2_max = float(np.min(h["p2_vec"])), float(np.max(h["p2_vec"]))
+        rect = Rectangle(
+            (p1_min, p2_min),
+            max(1e-6, p1_max - p1_min),
+            max(1e-6, p2_max - p2_min),
+            linewidth=1.6,
+            edgecolor=col,
+            facecolor="none",
+            linestyle="--" if idx_l > 0 else "-",
+            label=f"Ventana L{h['level']} (±{h['span1']:.3f} MHz)"
+        )
+        ax_l1.add_patch(rect)
+        traj_p1.append(h["best_p1"])
+        traj_p2.append(h["best_p2"])
+        ax_l1.plot(h["best_p1"], h["best_p2"], marker="o", markersize=5.5, color=col, markeredgecolor="black")
+
+    opt_p1, opt_p2 = float(best_d["p1"]), float(best_d["p2"])
+    traj_p1.append(opt_p1)
+    traj_p2.append(opt_p2)
+    ax_l1.plot(traj_p1, traj_p2, color="white", lw=1.2, ls=":")
+    ax_l1.scatter([opt_p1], [opt_p2], marker="*", s=170, c="#ef4444", edgecolors="white", lw=1.1, zorder=10, label="Óptimo Global ★")
+
+    ax_l1.set_xlabel(p1_label, fontsize=9.0)
+    ax_l1.set_ylabel(p2_label, fontsize=9.0)
+    ax_l1.set_title(f"1. Exploración Multinivel (L₁ → L{len(history)}) · {exp_name}", fontsize=9.6, fontweight="bold")
+    ax_l1.legend(loc="lower left", fontsize=7.3, framealpha=0.88)
+    ax_l1.grid(True, ls=":", alpha=0.35)
+
+    # Panel 2: Final Zoomed-In Level RMS Error Surface
+    P1_F, P2_F = np.meshgrid(p1_f, p2_f)
+    cf2 = ax_lf.contourf(P1_F, P2_F, rms_f, levels=18, cmap="magma_r")
+    cb2 = fig_g.colorbar(cf2, ax=ax_lf, pad=0.02)
+    cb2.set_label("Error RMS (PMT)", fontsize=8.5)
+
+    ax_lf.scatter(P1_F.ravel(), P2_F.ravel(), s=18, c="white", edgecolors="#1e293b", alpha=0.75, lw=0.7, label=f"Nodos Finos L{len(history)}")
+    ax_lf.scatter(
+        [opt_p1], [opt_p2],
+        marker="*", s=190, c="#22c55e", edgecolors="black", lw=1.1, zorder=10,
+        label=f"Convergido ★ ({opt_p1:+.4f}, {opt_p2:+.4f})"
+    )
+    ax_lf.set_xlabel(p1_label, fontsize=9.0)
+    ax_lf.set_ylabel(p2_label, fontsize=9.0)
+    ax_lf.set_title(
+        f"2. Zoom Final L{len(history)} + Pulido · RMS = {best_d['rms']:.4f} (r = {best_d['corr']:.2f}%)",
+        fontsize=9.6, fontweight="bold"
+    )
+    ax_lf.legend(loc="upper right", fontsize=7.8, framealpha=0.90)
+    ax_lf.grid(True, ls=":", alpha=0.35)
+
+    fig_g.tight_layout()
+    return fig_g
+
+
 def optimize_asymrotor_mlx_ui(
     preset_choice,
     exp_choice_str,
@@ -1479,15 +1571,20 @@ def optimize_asymrotor_mlx_ui(
     GW, LW, JMax,
     unit_str, spin_axis_str, SpinOdd,
     T2, W2,
-    Int1, Offset
+    Int1, Offset,
+    grid_size=5,
+    n_levels=3,
+    span_p1=0.60,
+    span_p2=0.60,
+    span_shift=120.0
 ):
     """
-    Refines (dA, dB, dC, Shift, Int1, Offset) against the experimental scan using
-    nonlinear least squares on `asym_rotor`, honoring `planar_chk` and `oblate_chk`.
+    Executes the Convergent Grid Method (Método de Rejilla Convergente) designed for
+    Dr. Mario Ulises Delgado-Jaime's `AsymRotor` engine, leveraging LRU eigenvalue caching
+    and fast shift-interpolation to find the global rotational-constant minimum across
+    nested coarse-to-fine grids, followed by local sub-grid refinement.
     """
-    from scipy.optimize import least_squares
-
-    x_exp, y_exp, _ = _load_raw_xy_for_asymrotor(exp_choice_str, uploaded_file)
+    x_exp, y_exp, exp_name = _load_raw_xy_for_asymrotor(exp_choice_str, uploaded_file)
     B_eff, C_eff, dB_eff, dC_eff = apply_planar_oblate_constraints(
         A, B, C, dA, dB, dC, planar_chk, oblate_chk
     )
@@ -1501,57 +1598,91 @@ def optimize_asymrotor_mlx_ui(
     SpinAxis = int(str(spin_axis_str).strip()[0]) if str(spin_axis_str).strip()[0].isdigit() else 0
     SpinOdd = float(SpinOdd)
     T2, W2 = float(T2), float(W2)
-    Int1, Offset = float(Int1), float(Offset)
 
-    # Use fast JMax=22 during least-squares steps, then full JMax for final plot
-    j_fit = min(int(JMax) if int(JMax) > 0 else 25, 24)
-
-    def _eval_residuals(p_vec):
-        da_v, db_v, dc_v, sh_v = p_vec[0], p_vec[1], p_vec[2], p_vec[3]
-        _, _, db_c, dc_c = apply_planar_oblate_constraints(A, B, C, da_v, db_v, dc_v, planar_chk, oblate_chk)
-        y_u = asym_rotor(
-            x_exp, A, B, C, da_v, db_c, dc_c,
-            Nu0 + sh_v, Temp, Th, Ph, GW, LW,
-            JMax=j_fit, Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd, T2=T2, W2=W2, lines=False
-        )
-        # Solve linear scale Int1 and Offset analytically for every candidate (da, db, dc, shift)
-        M_lin = np.column_stack((y_u, np.ones_like(y_u)))
-        coef, _, _, _ = np.linalg.lstsq(M_lin, y_exp, rcond=None)
-        model_v = coef[0] * y_u + coef[1]
-        return y_exp - model_v
-
-    p0 = np.array([dA, dB, dC, Shift], dtype=float)
-    res_opt = least_squares(_eval_residuals, p0, diff_step=0.02, max_nfev=18)
-    da_opt, db_opt, dc_opt, sh_opt = res_opt.x
-    B_f, C_f, db_f, dc_f = apply_planar_oblate_constraints(A, B, C, da_opt, db_opt, dc_opt, planar_chk, oblate_chk)
-
-    y_u_final = asym_rotor(
-        x_exp, A, B_f, C_f, da_opt, db_f, dc_f,
-        Nu0 + sh_opt, Temp, Th, Ph, GW, LW,
-        JMax=int(JMax), Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd, T2=T2, W2=W2, lines=False
+    t0_fit = time.perf_counter()
+    fit_res = convergent_grid_fit(
+        x_exp, y_exp,
+        A=A, B=B, C=C,
+        dA=dA, dB=dB, dC=dC,
+        Nu0=Nu0, Shift=Shift,
+        Trot=Temp, Theta=Th, Phi=Ph,
+        GW=GW, LW=LW,
+        JMax=int(JMax),
+        Unit=Unit, SpinAxis=SpinAxis, SpinOdd=SpinOdd,
+        T2=T2, W2=W2,
+        planar_chk=bool(planar_chk),
+        oblate_chk=bool(oblate_chk),
+        grid_size=int(grid_size),
+        n_levels=int(n_levels),
+        span_p1_mhz=float(span_p1),
+        span_p2_mhz=float(span_p2),
+        span_shift_mhz=float(span_shift),
+        polish_final=True,
     )
-    M_lin = np.column_stack((y_u_final, np.ones_like(y_u_final)))
-    coef, _, _, _ = np.linalg.lstsq(M_lin, y_exp, rcond=None)
-    int1_opt = max(1.0, float(coef[0]))
-    off_opt = float(coef[1])
+    elapsed_fit_s = time.perf_counter() - t0_fit
+    best_d = fit_res["best"]
+
+    A_opt = round(float(best_d["A"]), 5)
+    B_opt = round(float(best_d["B"]), 5)
+    C_opt = round(float(best_d["C"]), 5)
+    da_opt = round(float(best_d["dA"]), 5)
+    db_opt = round(float(best_d["dB"]), 5)
+    dc_opt = round(float(best_d["dC"]), 5)
+    sh_opt = round(float(best_d["shift"]), 3)
+    int1_opt = round(float(best_d["int1"]), 2)
+    off_opt = round(float(best_d["offset"]), 5)
 
     fig, B_out, C_out, dB_out, dC_out, rep_txt, code_txt, tbl = run_asymrotor_mlx_ui(
         preset_choice, exp_choice_str, uploaded_file, plot_style_str,
-        A, B_f, C_f, round(float(da_opt), 5), db_f, dc_f,
+        A_opt, B_opt, C_opt, da_opt, db_opt, dc_opt,
         planar_chk, oblate_chk,
-        Nu0, round(float(sh_opt), 3),
+        Nu0, sh_opt,
         Temp, Th, Ph, GW, LW, JMax,
         unit_str, spin_axis_str, SpinOdd, T2, W2,
-        round(int1_opt, 2), round(off_opt, 5)
+        int1_opt, off_opt
     )
+
+    fig_grid = plot_convergent_grid_figure(fit_res, exp_name=exp_name)
+
+    # Append Convergent Grid level-by-level log to report and code snippet
+    grid_log_lines = [
+        "",
+        f"🎯 MÉTODO DE REJILLA CONVERGENTE ({int(grid_size)}×{int(grid_size)} nodos × {int(n_levels)} niveles | {fit_res['unique_hamiltonians']} Hamiltonianos únicos en {elapsed_fit_s:.2f} s):",
+    ]
+    for h in fit_res["levels"]:
+        grid_log_lines.append(
+            f"  • Nivel L{h['level']} (ventana ±{h['span1']:.4f} / ±{h['span2']:.4f} MHz, paso={h['step1']:.4f} MHz): "
+            f"Mejor ({h['best_p1']:+.4f}, {h['best_p2']:+.4f}) MHz | Shift={h['best_shift']:+.2f} MHz | "
+            f"r={h['best_corr']:.2f}% | RMS={h['best_rms']:.4f}"
+        )
+    grid_log_lines.append(
+        f"  ★ Óptimo Convergido + Pulido Local: A={A_opt:.4f}, B={B_out:.4f}, C={C_out:.4f}, "
+        f"dA={da_opt:+.4f}, dB={dB_out:+.4f}, dC={dC_out:+.4f}, Shift={sh_opt:+.3f} MHz "
+        f"(r={best_d['corr']:.2f}%, RMS={best_d['rms']:.4f})"
+    )
+    rep_txt = rep_txt + "\n" + "\n".join(grid_log_lines)
+
+    code_txt = code_txt + "\n\n" + "\n".join([
+        "# === 3. Método de Rejilla Convergente en Python (convergent_grid_fit) ===",
+        "from asymrotor import convergent_grid_fit",
+        "fit_res = convergent_grid_fit(",
+        f"    x, y, A={A:.4f}, B={B:.4f}, C={C:.4f}, dA={dA:.4f}, dB={dB:.4f}, dC={dC:.4f},",
+        f"    Nu0={Nu0:.4f}, Shift={Shift:.3f}, Trot={Temp:.2f}, Theta={Th:.1f}, Phi={Ph:.1f}, GW={GW:.2f}, LW={LW:.2f},",
+        f"    planar_chk={bool(planar_chk)}, oblate_chk={bool(oblate_chk)},",
+        f"    grid_size={int(grid_size)}, n_levels={int(n_levels)}, span_p1_mhz={float(span_p1):.3f}, span_p2_mhz={float(span_p2):.3f}, span_shift_mhz={float(span_shift):.1f}",
+        ")",
+    ])
+
     return (
         fig,
-        B_out, C_out,
-        round(float(da_opt), 5), dB_out, dC_out,
-        round(float(sh_opt), 3),
-        round(int1_opt, 2), round(off_opt, 5),
+        fig_grid,
+        A_opt, B_out, C_out,
+        da_opt, dB_out, dC_out,
+        sh_opt,
+        int1_opt, off_opt,
         rep_txt, code_txt, tbl
     )
+
 
 
 def build_gradio_app():
@@ -2000,6 +2131,18 @@ def build_gradio_app():
                             ar_Int1 = gr.Number(value=9130.0, label="Int1 (Área Integrada Detector)")
                             ar_Offset = gr.Number(value=0.071, label="Offset (Línea Base Detector)")
 
+                        with gr.Accordion("🎯 Método de Rejilla Convergente (Multigrid Coarse-to-Fine + Caché LRU AsymRotor)", open=True):
+                            gr.Markdown(
+                                "*Evalúa una rejilla 2D de constantes rotacionales reutilizando la diagonalización del Hamiltoniano (1 sola construcción por nodo para 21 corrimientos `Shift`) y reduce iterativamente la ventana de búsqueda hacia el mínimo global:*"
+                            )
+                            with gr.Row():
+                                ar_grid_size = gr.Slider(3, 9, value=5, step=2, label="Rejilla N×N por Nivel")
+                                ar_n_levels = gr.Slider(1, 5, value=3, step=1, label="Niveles de Zoom (L₁→Lₖ)")
+                            with gr.Row():
+                                ar_span_p1 = gr.Number(value=0.60, label="Rango Inicial ±Δp₁ (MHz) [dA o A]")
+                                ar_span_p2 = gr.Number(value=0.60, label="Rango Inicial ±Δp₂ (MHz) [dB o dA]")
+                                ar_span_shift = gr.Number(value=120.0, label="Rango Shift ±Δν₀ (MHz)")
+
                         with gr.Accordion("⚙️ Opciones Avanzadas AsymRotor: Modelo de 2 Temperaturas (T2, W2), Unidades y Subir Archivo (Trifenileno)", open=False):
                             with gr.Row():
                                 ar_Unit = gr.Dropdown(
@@ -2015,13 +2158,14 @@ def build_gradio_app():
                             )
 
                         btn_ar_sim = gr.Button("⚡ Evaluar Modelo AsymRotor (.mlx / Python Exacto)", variant="primary", size="lg")
-                        btn_ar_fit = gr.Button("🔧 Optimizar Automáticamente (dA, dB, dC, Shift, Int1, Offset) sobre Datos", variant="secondary")
+                        btn_ar_fit = gr.Button("🎯 Ejecutar Método de Rejilla Convergente (Multigrid Coarse-to-Fine + Pulido)", variant="secondary", size="lg")
 
                     with gr.Column(scale=2):
                         ar_plot_out = gr.Plot(label="Simulación AsymRotor vs. Datos Experimentales + Residuales")
+                        ar_grid_plot_out = gr.Plot(label="🎯 Mapa 2D del Método de Rejilla Convergente (Exploración Multinivel L₁→Lₖ y Superficie RMS)")
                         ar_report_out = gr.Textbox(
-                            label="Diagnóstico Físico AsymRotor: Factor κ de Ray, Condición de Rotor Plano C = AB/(A+B) y Error RMS",
-                            lines=7
+                            label="Diagnóstico Físico AsymRotor: Factor κ de Ray, Condición de Rotor Plano C = AB/(A+B), Bitácora Multinivel y Error RMS",
+                            lines=9
                         )
                         ar_code_out = gr.Textbox(
                             label="Código Equivalente en Vivo (Listo para copiar a Google Colab en Python o a MATLAB Live Script .mlx)",
@@ -2275,10 +2419,11 @@ def build_gradio_app():
 
         btn_ar_fit.click(
             fn=optimize_asymrotor_mlx_ui,
-            inputs=ar_all_inputs,
+            inputs=ar_all_inputs + [ar_grid_size, ar_n_levels, ar_span_p1, ar_span_p2, ar_span_shift],
             outputs=[
                 ar_plot_out,
-                ar_B, ar_C, ar_dA, ar_dB, ar_dC,
+                ar_grid_plot_out,
+                ar_A, ar_B, ar_C, ar_dA, ar_dB, ar_dC,
                 ar_Shift, ar_Int1, ar_Offset,
                 ar_report_out, ar_code_out, ar_table_out
             ]
