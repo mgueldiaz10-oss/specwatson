@@ -27,7 +27,7 @@ from specwatson.hamiltonian import MoleculeState, AsymmetricRotorHamiltonian
 from specwatson.transitions import RovibronicTransitionCalculator, WAVENUMBER_TO_MHZ, MHZ_TO_WAVENUMBER
 from specwatson.spectrum import SpectrumSimulator
 from specwatson.fitting import ContourFitter
-from specwatson.io_parsers import parse_spectrometer_file, auto_assign_spectrometer_lines
+from specwatson.io_parsers import parse_spectrometer_file, auto_assign_spectrometer_lines, render_jb95_workstation_html
 from specwatson.asymrotor import asym_rotor, planar_top_c, ray_kappa, convergent_grid_fit
 from specwatson.quantum_chem import (
     MOLECULE_CATALOG,
@@ -50,6 +50,15 @@ BAND_TYPE_CHOICES = [
     "Tipo a Puro (ΔKa = par, ΔKc = impar | Ej. Fluoreno, H₂CO, CO₂)",
     "Tipo c Puro (ΔKa = impar, ΔKc = par | Dipolo fuera del plano c)",
     "Banda Híbrida (Mezcla a + b + c controlada por pesos μₐ², μ_b², μ_c²)",
+]
+
+# Selection Rule Mode choices for Tab 2 (JB95 Workstation & Differential Evolution Assigner)
+ASG_BAND_TYPE_CHOICES = [
+    "🤖 Auto-Proponer Mejor Tipo (Evalúa A, B y C en el barrido)",
+    "Tipo b Puro (ΔKa = impar, ΔKc = impar | Ej. Carbazol, Fenol, H₂O)",
+    "Tipo a Puro (ΔKa = par, ΔKc = impar | Ej. Fluoreno, H₂CO, CO₂)",
+    "Tipo c Puro (ΔKa = impar, ΔKc = par | Dipolo fuera del plano c)",
+    "🔀 Híbrido Multicanal (Propone Tipo A, B o C por cada pico)",
 ]
 
 # Hamiltonian Model choices
@@ -621,16 +630,18 @@ def on_asg_source_change(exp_file_choice):
             500.7500, 500.7500, 250.3750,
             910238257.8,
             28.0,
-            BAND_TYPE_CHOICES[1],  # Tipo a / Simétrico en plano
-            12.0                   # Tolerancia MHz
+            ASG_BAND_TYPE_CHOICES[0],  # Auto-proponer mejor tipo (A, B, C)
+            12.0,                      # Tolerancia MHz
+            True                       # Rotor plano C = AB/(A+B)
         )
     return (
         2253.2409, 594.2103, 470.3670,
         2250.6104, 586.3482, 465.2923,
         923604613.0295,
         45.0,
-        BAND_TYPE_CHOICES[0],      # Tipo b Puro (Carbazol)
-        5.5
+        ASG_BAND_TYPE_CHOICES[1],      # Tipo b Puro (Carbazol)
+        5.5,
+        False
     )
 
 
@@ -642,15 +653,15 @@ def run_automatic_line_assignment_ui(
     origin_mhz_in,
     T_rot, fwhm_mhz, J_max,
     band_mode_str, ham_mode_str,
-    tolerance_mhz, min_peak_pct, refine_chk
+    tolerance_mhz, min_peak_pct,
+    refine_chk, planar_chk, de_gens,
+    run_de_sweep=False
 ):
     """
-    Callback for Automatic Quantum Line Assignment (`A/B/C J' Ka' Kc' <- J'' Ka'' Kc''`)
-    from raw spectrometer scans (`PmtFla` or uploaded file) and `.asc` JB95 file export.
-    Plots:
-      - Top Panel (JCP Mirror Mode): Experimental `PmtFla` on TOP (+Y) with assigned peak markers
-        and quantum transition labels, and Simulated + Stick Spectrum inverted on BOTTOM (-Y).
-      - Bottom Panel: Residual errors (ν_exp - ν_calc in MHz) for all assigned lines.
+    Callback for the JB95 Workstation + Differential Evolution Peak-Projection Assigner (`A/B/C J' Ka' Kc' <- J'' Ka'' Kc''`)
+    from raw spectrometer scans (`PmtFla`, `pmt-nFLa`, or uploaded file) and `.asc` JB95 file export.
+    Returns:
+      (jb95_html, fig, report_text, asc_preview_text, table_rows, asc_file_path, r_A0, r_B0, r_C0, r_A1, r_B1, r_C1, r_nu0)
     """
     plt.close("all")
     try:
@@ -659,16 +670,16 @@ def run_automatic_line_assignment_ui(
         origin_mhz = float(origin_mhz_in)
         T_rot = max(0.2, float(T_rot))
         fwhm_mhz = max(2.0, float(fwhm_mhz))
-        J_max = max(4, min(int(J_max), 30))
+        J_max = max(4, min(int(J_max), 35))
         tol_mhz = max(0.5, float(tolerance_mhz))
         min_peak_h = max(0.01, float(min_peak_pct) / 100.0)
+        de_gens_int = max(4, min(int(de_gens), 40))
 
         # Load experimental raw scan
         if "Subido" in str(exp_file_choice) and uploaded_raw_file is not None:
             up_path = uploaded_raw_file.name if hasattr(uploaded_raw_file, "name") else str(uploaded_raw_file)
             exp_ds = parse_spectrometer_file(up_path, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
         elif "pmt-nFLa" in str(exp_file_choice) and os.path.exists(DEFAULT_PMTNFLA_PATH):
-            # If user switched to pmt-nFLa (Trifenileno) while Carbazole constants/origin were still in the boxes, auto-adapt!
             if abs(origin_mhz - 923604613.0) < 1e6:
                 origin_mhz = 910238257.8
             if abs(A0 - 2253.24) < 50.0:
@@ -680,20 +691,28 @@ def run_automatic_line_assignment_ui(
                 origin_mhz = 923604613.0295
             exp_ds = parse_spectrometer_file(DEFAULT_PMTFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
 
-        # Ensure origin_mhz is always inside or near the experimental scan window so the X-axis never stretches across THz
         if origin_mhz < float(exp_ds.freq_mhz[0]) - 50000.0 or origin_mhz > float(exp_ds.freq_mhz[-1]) + 50000.0:
             origin_mhz = float(exp_ds.origin_mhz)
 
         is_rigid = "Rotor Rígido" in str(ham_mode_str)
         dJ_val = 0.0 if is_rigid else 0.00025
-        sel_crit, dip, _ = _resolve_selection_criterion(band_mode_str, 0.0, 1.0, 0.0)
-        if sel_crit == "a":
+
+        b_str = str(band_mode_str)
+        if "Auto-Proponer" in b_str:
+            sel_crit = "auto"
+            dip = (0.33, 0.34, 0.33)
+        elif "Híbrido" in b_str or "Híbrida" in b_str:
+            sel_crit = "hybrid"
+            dip = (0.33, 0.34, 0.33)
+        elif "Tipo a" in b_str:
+            sel_crit = "a"
             dip = (1.0, 0.0, 0.0)
-        elif sel_crit == "c":
+        elif "Tipo c" in b_str:
+            sel_crit = "c"
             dip = (0.0, 0.0, 1.0)
         else:
-            dip = (0.0, 1.0, 0.0)
             sel_crit = "b"
+            dip = (0.0, 1.0, 0.0)
 
         s0 = MoleculeState("S0", A=A0, B=B0, C=C0, Delta_J=dJ_val)
         s1 = MoleculeState("S1", A=A1, B=B1, C=C1, Delta_J=dJ_val, origin=origin_mhz * MHZ_TO_WAVENUMBER)
@@ -710,129 +729,155 @@ def run_automatic_line_assignment_ui(
             tolerance_mhz=tol_mhz,
             min_peak_height=min_peak_h,
             min_jb95_intensity=0.010,
-            refine_constants=bool(refine_chk),
+            refine_constants=bool(refine_chk) or bool(run_de_sweep),
+            run_de_sweep=bool(run_de_sweep),
+            de_generations=de_gens_int,
+            planar_constraint=bool(planar_chk),
+            fwhm_mhz=fwhm_mhz,
             output_filename=f"Asignacion_{exp_ds.filename}_SpecWatson.asc"
         )
 
-        # Build simulated continuous contour for the mirror plot
-        m0 = AsymmetricRotorHamiltonian(s0).compute_manifold(J_max)
-        m1 = AsymmetricRotorHamiltonian(s1).compute_manifold(J_max)
-        calc = RovibronicTransitionCalculator(
-            m0, m1, origin_mhz * MHZ_TO_WAVENUMBER, T_rot, dip, selection_criterion=sel_crit
-        )
-        sim_lines = calc.calculate_transitions(J_max, J_max)
-        sim = SpectrumSimulator(sim_lines, fwhm_mhz=fwhm_mhz, profile="voigt")
-        f_sim, y_sim = sim.simulate(
-            grid_points=len(exp_ds.freq_mhz),
-            freq_range_mhz=(float(exp_ds.freq_mhz[0]), float(exp_ds.freq_mhz[-1]))
+        # Render full-screen interactive JB95 Workstation HTML5 Canvas
+        jb95_html = render_jb95_workstation_html(
+            exp_ds,
+            asg_res,
+            is_rigid=is_rigid,
+            sel_crit=asg_res.proposed_band_type,
+            tolerance_mhz=tol_mhz
         )
 
-        rel_exp_ghz = (exp_ds.freq_mhz - origin_mhz) / 1000.0
-        rel_sim_ghz = (f_sim - origin_mhz) / 1000.0
+        rc = asg_res.refined_constants or {}
+        r_A0 = float(rc.get("A0", A0))
+        r_B0 = float(rc.get("B0", B0))
+        r_C0 = float(rc.get("C0", C0))
+        r_A1 = float(rc.get("A1", A1))
+        r_B1 = float(rc.get("B1", B1))
+        r_C1 = float(rc.get("C1", C1))
+        r_nu0 = float(rc.get("origin_mhz", origin_mhz))
+        prop_type = asg_res.proposed_band_type
+
+        rel_exp_ghz = (exp_ds.freq_mhz - r_nu0) / 1000.0
+        y_sim = asg_res.sim_intensity_norm if asg_res.sim_intensity_norm is not None else np.zeros_like(exp_ds.intensity_norm)
 
         fig, (ax1, ax2) = plt.subplots(
-            2, 1, figsize=(11.0, 6.2), dpi=135,
+            2, 1, figsize=(11.5, 5.8), dpi=135,
             gridspec_kw={"height_ratios": [3.2, 1.2]}, sharex=True
         )
 
-        # Top Panel: Experimental on TOP (+Y) and Simulated + Assigned Sticks on BOTTOM (-Y)
+        # Top Panel: Experimental on TOP (+Y) with baseline projections & Simulated on BOTTOM (-Y)
         ax1.plot(
             rel_exp_ghz, exp_ds.intensity_norm,
-            color="#ea580c", lw=1.25, alpha=0.92,
+            color="#ea580c", lw=1.15, alpha=0.92,
             label=f"Experimental Espectrómetro '{exp_ds.filename}' (Arriba +Y)"
         )
-        ax1.fill_between(rel_exp_ghz, 0.0, exp_ds.intensity_norm, color="#f97316", alpha=0.12)
+        ax1.fill_between(rel_exp_ghz, 0.0, exp_ds.intensity_norm, color="#f97316", alpha=0.10)
 
         ax1.plot(
-            rel_sim_ghz, -y_sim,
-            color="#1d4ed8", lw=1.35, alpha=0.90,
-            label=f"Simulado Cuántico [{('Rotor Rígido' if is_rigid else 'Watson')} · Tipo {sel_crit.upper()}] (Espejo Abajo -Y)"
+            rel_exp_ghz, -y_sim,
+            color="#1d4ed8", lw=1.25, alpha=0.90,
+            label=f"Simulación Óptima [{('Rotor Rígido' if is_rigid else 'Watson')} · Tipo {prop_type}] (Espejo Abajo -Y)"
         )
-        ax1.fill_between(rel_sim_ghz, 0.0, -y_sim, color="#3b82f6", alpha=0.15)
+        ax1.fill_between(rel_exp_ghz, 0.0, -y_sim, color="#3b82f6", alpha=0.14)
 
-        # Plot assigned quantum sticks & peak markers
+        # Separate isolated single peaks vs overlapped peaks projected to baseline (y = 0)
+        single_pks = [p for p in asg_res.detected_peaks if p.status == "single"]
+        ovlp_pks = [p for p in asg_res.detected_peaks if p.status == "overlapped"]
+
+        if single_pks:
+            sx = np.array([(p.freq_mhz - r_nu0) / 1000.0 for p in single_pks])
+            sy = np.array([p.height_norm for p in single_pks])
+            ax1.vlines(sx, 0.0, sy, color="#10b981", lw=0.85, alpha=0.65, label=f"Proyección Línea Base: {len(single_pks)} Picos Aislados (×1)")
+            ax1.scatter(sx, sy, s=16, color="#10b981", edgecolors="#064e3b", linewidths=0.5, zorder=6)
+
+        if ovlp_pks:
+            ox = np.array([(p.freq_mhz - r_nu0) / 1000.0 for p in ovlp_pks])
+            oy = np.array([p.height_norm for p in ovlp_pks])
+            ax1.vlines(ox, 0.0, oy, color="#f59e0b", lw=1.15, alpha=0.85, label=f"Proyección Línea Base: {len(ovlp_pks)} Picos Traslapados (×N)")
+            ax1.scatter(ox, oy, s=22, color="#f59e0b", edgecolors="#78350f", linewidths=0.7, zorder=7)
+
         if asg_res.assigned_entries:
-            asg_f_ghz = np.array([(e.freq_calc_mhz - origin_mhz) / 1000.0 for e in asg_res.assigned_entries])
-            asg_obs_ghz = np.array([(e.freq_obs_mhz - origin_mhz) / 1000.0 for e in asg_res.assigned_entries])
+            asg_f_ghz = np.array([(e.freq_calc_mhz - r_nu0) / 1000.0 for e in asg_res.assigned_entries])
             asg_i_raw = np.array([e.intensity_jb95 for e in asg_res.assigned_entries])
             max_i_asg = float(np.max(asg_i_raw)) if np.max(asg_i_raw) > 0 else 1.0
             asg_i_norm = (asg_i_raw / max_i_asg) * 0.88
-
-            # Quantum stick lines pointing downwards in the simulated half (-Y)
             ax1.vlines(
                 asg_f_ghz, 0.0, -asg_i_norm,
-                color="#059669", lw=0.85, alpha=0.75,
-                label=f"{len(asg_res.assigned_entries)} Líneas Cuánticas Asignadas ({sel_crit.upper()} J'Ka'Kc' ← J''Ka''Kc'')"
+                color="#059669", lw=0.80, alpha=0.72,
+                label=f"{len(asg_res.assigned_entries)} Transiciones Cuánticas Asignadas (.asc)"
             )
-
-            # Experimental peak markers on top (+Y)
-            obs_heights = np.interp(asg_obs_ghz, rel_exp_ghz, exp_ds.intensity_norm)
-            ax1.scatter(
-                asg_obs_ghz, obs_heights,
-                s=16, color="#10b981", edgecolors="#064e3b", linewidths=0.6, zorder=6,
-                label="Picos Experimentales Emparejados"
-            )
-
-            # Annotate up to 6 prominent well-separated assigned peaks with their quantum numbers
-            sorted_by_int = sorted(asg_res.assigned_entries, key=lambda x: x.intensity_jb95, reverse=True)
-            labeled_x = []
-            for entry in sorted_by_int:
-                x_ghz = (entry.freq_obs_mhz - origin_mhz) / 1000.0
-                if all(abs(x_ghz - lx) > 3.5 for lx in labeled_x) and len(labeled_x) < 6:
-                    labeled_x.append(x_ghz)
-                    y_val = float(np.interp(x_ghz, rel_exp_ghz, exp_ds.intensity_norm))
-                    q_lbl = f"{entry.band_type} {entry.J_up}({entry.Ka_up},{entry.Kc_up})←{entry.J_low}({entry.Ka_low},{entry.Kc_low})"
-                    ax1.annotate(
-                        q_lbl,
-                        xy=(x_ghz, y_val),
-                        xytext=(x_ghz, min(1.16, y_val + 0.14)),
-                        fontsize=7.2, fontweight="bold", color="#065f46", ha="center",
-                        arrowprops=dict(arrowstyle="->", color="#059669", lw=0.7)
-                    )
 
         ax1.axhline(0.0, color="#1e293b", lw=1.0)
         ax1.axvline(0.0, color="#ef4444", ls=":", lw=0.95, alpha=0.75, label="Origen de Banda ν₀")
         ax1.set_xlim(float(rel_exp_ghz[0]), float(rel_exp_ghz[-1]))
         ax1.set_ylim(-1.12, 1.24)
-        ax1.set_ylabel("Intensidad (+Exp Arriba / -Sim Abajo)", fontsize=9.8)
+        ax1.set_ylabel("Intensidad (+Exp / -Sim)", fontsize=9.8)
         ax1.set_title(
-            f"Asignación Automática de Líneas Cuánticas (Formato JB95 .asc): {asg_res.assigned_count} Transiciones Asignadas (RMS = {asg_res.rms_residual_mhz:.2f} MHz)",
-            fontsize=10.8, fontweight="bold"
+            f"Proyección a Línea Base y Asignación JB95 (.asc): {asg_res.assigned_count} Líneas ({asg_res.single_peaks_count} Aislados, {asg_res.overlapped_peaks_count} Traslapados) | RMS = {asg_res.rms_residual_mhz:.2f} MHz",
+            fontsize=10.2, fontweight="bold"
         )
-        ax1.legend(loc="upper right", fontsize=8.0, framealpha=0.92)
+        ax1.legend(loc="upper right", fontsize=7.6, framealpha=0.92, ncol=2)
         ax1.grid(True, ls="--", alpha=0.35)
 
-        # Bottom Panel: Residuals (ν_exp - ν_calc in MHz)
+        # Bottom Panel: Residuals (ν_exp - ν_calc in MHz) colored by overlap status
         if asg_res.assigned_entries:
-            res_x = np.array([(e.freq_calc_mhz - origin_mhz) / 1000.0 for e in asg_res.assigned_entries])
+            res_x = np.array([(e.freq_calc_mhz - r_nu0) / 1000.0 for e in asg_res.assigned_entries])
             res_y = np.array([e.residual_mhz for e in asg_res.assigned_entries])
-            ax2.vlines(res_x, 0.0, res_y, color="#10b981", lw=0.9, alpha=0.7)
-            ax2.scatter(res_x, res_y, s=18, color="#059669", edgecolors="#064e3b", linewidths=0.5, zorder=4,
-                        label=f"Residual ν_exp - ν_calc (RMS = {asg_res.rms_residual_mhz:.2f} MHz)")
+            res_colors = ["#f59e0b" if e.is_overlapped else "#10b981" for e in asg_res.assigned_entries]
+            ax2.vlines(res_x, 0.0, res_y, color=res_colors, lw=0.85, alpha=0.72)
+            ax2.scatter(res_x, res_y, s=16, c=res_colors, edgecolors="#0f172a", linewidths=0.4, zorder=4,
+                        label=f"Residual ν_exp - ν_calc (Verde=Aislado / Ámbar=Traslapado | RMS = {asg_res.rms_residual_mhz:.2f} MHz)")
             ax2.axhspan(-asg_res.rms_residual_mhz, asg_res.rms_residual_mhz, color="#10b981", alpha=0.12, label="Banda ±1 RMS")
 
         ax2.axhline(0.0, color="#1e293b", lw=0.8, ls="--")
         ax2.set_xlabel("Desplazamiento de Frecuencia Relativa ν - ν₀ (GHz)", fontsize=10.0)
         ax2.set_ylabel("Residual (MHz)", fontsize=9.5)
         ax2.set_ylim(-tol_mhz * 1.15, tol_mhz * 1.15)
-        ax2.legend(loc="upper right", fontsize=8.0)
+        ax2.legend(loc="upper right", fontsize=7.8)
         ax2.grid(True, ls="--", alpha=0.35)
 
         fig.tight_layout()
 
         return (
+            jb95_html,
             fig,
             asg_res.report_text,
             asg_res.asc_preview_text,
-            asg_res.assigned_table_rows[:150],
-            asg_res.asc_file_path
+            asg_res.assigned_table_rows[:200],
+            asg_res.asc_file_path,
+            round(r_A0, 5), round(r_B0, 5), round(r_C0, 5),
+            round(r_A1, 5), round(r_B1, 5), round(r_C1, 5),
+            round(r_nu0, 4)
         )
 
     except Exception as e:
+        err_html = f"<div style='padding:20px;background:#fef2f2;color:#991b1b;border:1px solid #f87171;border-radius:8px;'>❌ Error en Estación JB95: {str(e)}</div>"
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.text(0.5, 0.5, f"Error en asignación automática: {str(e)}", ha="center", color="red")
         ax.axis("off")
-        return fig, f"Error detallado: {repr(e)}", "", [], None
+        return err_html, fig, f"Error detallado: {repr(e)}", "", [], None, A0, B0, C0, A1, B1, C1, origin_mhz_in
+
+
+def run_de_line_assignment_ui(
+    exp_file_choice,
+    uploaded_raw_file,
+    A0, B0, C0,
+    A1, B1, C1,
+    origin_mhz_in,
+    T_rot, fwhm_mhz, J_max,
+    band_mode_str, ham_mode_str,
+    tolerance_mhz, min_peak_pct,
+    refine_chk, planar_chk, de_gens
+):
+    """Wrapper that triggers the full Differential Evolution sweep + baseline peak projection + least-squares refinement."""
+    return run_automatic_line_assignment_ui(
+        exp_file_choice, uploaded_raw_file,
+        A0, B0, C0, A1, B1, C1, origin_mhz_in,
+        T_rot, fwhm_mhz, J_max,
+        band_mode_str, ham_mode_str,
+        tolerance_mhz, min_peak_pct,
+        refine_chk, planar_chk, de_gens,
+        run_de_sweep=True
+    )
 
 
 def export_spectrum_high_dpi(
@@ -1861,124 +1906,156 @@ def build_gradio_app():
                             )
 
             # =========================================================================
-            # TAB 2: ASIGNACIÓN AUTOMÁTICA DE LÍNEAS (.asc / JB95) & AJUSTE EVOLUTIVO
+            # TAB 2: ESTACIÓN INTERACTIVA JB95 + BARRIDO POR EVOLUCIÓN DIFERENCIAL (.asc)
             # =========================================================================
-            with gr.TabItem("🎯 2. Asignador de Líneas (.asc / JB95)", id="tab_fit"):
+            with gr.TabItem("🎯 2. Estación JB95 & Evolución Diferencial (.asc)", id="tab_fit"):
                 gr.Markdown(
                     """
-                    ### A. Asignador Automático de Líneas Cuánticas (`A`, `B`, `C` · J′ Kₐ′ K_c′ ← J″ Kₐ″ K_c″) desde Espectrómetro Crudo (`PmtFla` / `pmt-nFLa`)
-                    En programas clásicos como **JB95**, el usuario debía hacer clic manualmente pico por pico sobre el archivo crudo (`PmtFla` o `pmt-nFLa`) para asignarle sus números cuánticos y generar el archivo `.asc` (`IAR.asc`).  
-                    Aquí **SpecWatson** detecta automáticamente los máximos experimentales con interpolación parabólica sub-MHz, los empareja con las transiciones cuánticas teóricas (`B J' Ka' Kc' ← J'' Ka'' Kc''`), calcula el error residual (**ν_exp − ν_calc**) y **genera el archivo `.asc` completo listo para descargar**.
+                    ### 🎛️ Estación de Trabajo Interactiva Tipo `JB95` + Barrido por Evolución Diferencial y Proyección a Línea Base (`PmtFla` / `pmt-nFLa`)
+                    Replica y moderniza la interfaz de pantalla completa de **JET/BEAM 95 (`JB95`)** acoplada a **Evolución Diferencial (`DE`)**:
+                    * **Proyección Vertical a la Línea Base (`y = 0`):** El algoritmo barre todas las frecuencias de los datos crudos del espectrómetro, detecta cada máximo experimental con interpolación parabólica sub-MHz, genera un punto en la cúspide y **proyecta una línea vertical hacia abajo hasta la línea base (`y = 0`)**, simulando la asignación manual pico por pico en JB95.
+                    * **Identificación Visual de Líneas Traslapadas (`×N`):** Distingue automáticamente **🟢 Líneas Aisladas (`×1`, verde esmeralda)** de **🟠 Picos con Líneas Traslapadas (`×N`, ámbar con sub-sticks magenta individuales dentro del mismo pico)** y **🔴 Picos Sin Asignar (rojo punteado)**, además de un botón **`[⚠️ Ir a Traslape ➔]`** para saltar de un multiplete traslapado al siguiente.
+                    * **Navegación Interactiva por Mouse (Estilo JB95):**
+                      * **🖱️ Clic Izquierdo + Arrastrar:** Desplázate libremente de forma **horizontal** (recorrer frecuencias a lo largo de todo el espectro) y **vertical** (ajustar la posición de la línea base).
+                      * **⚙️ Rueda del Mouse (Scroll):** **Amplía la escala vertical de amplitud de los picos (`Y-Gain`)** y hace **zoom horizontal** al mismo tiempo para inspeccionar líneas muy cercanas o traslapadas (`Shift + Rueda` = solo amplitud vertical `Y-Gain`; `Ctrl + Rueda` = solo zoom horizontal de frecuencia).
                     """
                 )
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        asg_source_dropdown = gr.Dropdown(
-                            choices=[
-                                "📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
-                                "📡 Espectrómetro Real Pre-cargado: pmt-nFLa (Trifenileno - Dr. Leonardo & Dr. Mario)",
-                                "📤 Usar Archivo Experimental Crudo Subido Abajo (.dat, PmtFla, .csv)"
-                            ],
-                            value="📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
-                            label="1. Archivo Experimental Crudo a Asignar"
-                        )
-                        asg_raw_upload = gr.File(
-                            label="Opcional: Subir otro archivo crudo del espectrómetro (PmtFla, .dat, .csv)",
-                            file_count="single"
-                        )
-                        with gr.Row():
-                            asg_a0 = gr.Number(value=2253.2409, label="A″ Basal (MHz)")
-                            asg_b0 = gr.Number(value=594.2103, label="B″ Basal (MHz)")
-                            asg_c0 = gr.Number(value=470.3670, label="C″ Basal (MHz)")
-                        with gr.Row():
-                            asg_a1 = gr.Number(value=2250.6104, label="A′ Excitado (MHz)")
-                            asg_b1 = gr.Number(value=586.3482, label="B′ Excitado (MHz)")
-                            asg_c1 = gr.Number(value=465.2923, label="C′ Excitado (MHz)")
 
-                        asg_origin = gr.Number(value=923604613.0295, label="Origen de Banda ν₀ (MHz) [Ej. 923604613.03 MHz]")
-
-                        with gr.Row():
-                            asg_band_mode = gr.Dropdown(
-                                choices=BAND_TYPE_CHOICES[:3],
-                                value=BAND_TYPE_CHOICES[0],
-                                label="Criterio de Selección (Letra en .asc: B, A o C)"
+                with gr.Group():
+                    with gr.Row():
+                        with gr.Column(scale=2):
+                            asg_source_dropdown = gr.Dropdown(
+                                choices=[
+                                    "📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
+                                    "📡 Espectrómetro Real Pre-cargado: pmt-nFLa (Trifenileno - Dr. Leonardo & Dr. Mario)",
+                                    "📤 Usar Archivo Experimental Crudo Subido Abajo (.dat, PmtFla, .csv)"
+                                ],
+                                value="📡 Espectrómetro Real Pre-cargado: PmtFla (Carbazol - Dr. Leonardo)",
+                                label="1. Archivo Experimental Crudo del Espectrómetro"
                             )
-                            asg_ham_mode = gr.Dropdown(
-                                choices=HAMILTONIAN_CHOICES,
-                                value=HAMILTONIAN_CHOICES[0],
-                                label="Modelo Hamiltoniano"
+                            asg_raw_upload = gr.File(
+                                label="Opcional: Subir otro archivo crudo del espectrómetro (PmtFla, .dat, .csv)",
+                                file_count="single",
+                                height=68
                             )
+                        with gr.Column(scale=3):
+                            with gr.Row():
+                                asg_a0 = gr.Number(value=2253.2409, label="A″ Basal (MHz)", precision=4)
+                                asg_b0 = gr.Number(value=594.2103, label="B″ Basal (MHz)", precision=4)
+                                asg_c0 = gr.Number(value=470.3670, label="C″ Basal (MHz)", precision=4)
+                                asg_origin = gr.Number(value=923604613.0295, label="Origen de Banda ν₀ (MHz)", precision=4)
+                            with gr.Row():
+                                asg_a1 = gr.Number(value=2250.6104, label="A′ Excitado (MHz)", precision=4)
+                                asg_b1 = gr.Number(value=586.3482, label="B′ Excitado (MHz)", precision=4)
+                                asg_c1 = gr.Number(value=465.2923, label="C′ Excitado (MHz)", precision=4)
+                                asg_band_mode = gr.Dropdown(
+                                    choices=ASG_BAND_TYPE_CHOICES,
+                                    value=ASG_BAND_TYPE_CHOICES[1],
+                                    label="Criterio / Propuesta de Tipo (A, B, C)"
+                                )
 
-                        with gr.Row():
-                            asg_trot = gr.Slider(0.5, 12.0, value=2.6, step=0.1, label="T_rot (K)")
-                            asg_fwhm = gr.Slider(5.0, 80.0, value=45.0, step=1.0, label="FWHM (MHz)")
-                            asg_jmax = gr.Slider(6, 30, value=26, step=1, label="J Máximo")
+                    with gr.Row():
+                        asg_ham_mode = gr.Dropdown(
+                            choices=HAMILTONIAN_CHOICES,
+                            value=HAMILTONIAN_CHOICES[0],
+                            label="Modelo Hamiltoniano",
+                            scale=2
+                        )
+                        asg_trot = gr.Slider(0.5, 12.0, value=2.6, step=0.1, label="T_rot (K)", scale=1)
+                        asg_fwhm = gr.Slider(5.0, 80.0, value=45.0, step=1.0, label="FWHM (MHz)", scale=1)
+                        asg_jmax = gr.Slider(6, 35, value=26, step=1, label="J Máx", scale=1)
+                        asg_tol = gr.Slider(1.0, 20.0, value=5.5, step=0.5, label="Tolerancia |ν_exp-ν_calc| (MHz)", scale=1)
+                        asg_min_pk = gr.Slider(2.0, 25.0, value=6.0, step=1.0, label="Umbral Pico Exp (%)", scale=1)
+                        asg_de_gens = gr.Slider(4, 30, value=12, step=1, label="Generaciones DE", scale=1)
 
-                        with gr.Row():
-                            asg_tol = gr.Slider(1.0, 20.0, value=5.5, step=0.5, label="Tolerancia de Asignación |ν_exp - ν_calc| (MHz)")
-                            asg_min_pk = gr.Slider(2.0, 25.0, value=6.0, step=1.0, label="Altura Mín. de Pico Exp (%)")
-
+                    with gr.Row():
                         asg_refine_chk = gr.Checkbox(
+                            value=True,
+                            label="🔧 Refinar (A′, B′, C′, ν₀) por Mínimos Cuadrados No Lineales y Re-Simular con Constantes Óptimas"
+                        )
+                        asg_planar_chk = gr.Checkbox(
                             value=False,
-                            label="🔧 Refinar (A′, B′, C′, ν₀) por Mínimos Cuadrados usando las líneas asignadas"
+                            label="📐 Restricción de Rotor Plano durante Evolución Diferencial: C = A·B / (A + B)"
+                        )
+
+                    with gr.Row():
+                        btn_run_de_assign = gr.Button(
+                            "🧬 1. Barrido por Evolución Diferencial + Proyectar Picos a Línea Base + Proponer Tipo (a/b/c) y Calcular Constantes",
+                            variant="primary",
+                            size="lg",
+                            scale=3
                         )
                         btn_run_assign = gr.Button(
-                            "🎯 Asignar Líneas Cuánticas Automáticamente y Generar Archivo .asc (JB95)",
-                            variant="primary",
-                            size="lg"
+                            "🎯 2. Proyectar Picos a Línea Base y Asignar Líneas (Con Constantes Actuales)",
+                            variant="secondary",
+                            size="lg",
+                            scale=2
                         )
+
+                # FULL-SCREEN INTERACTIVE JB95 WORKSTATION VIEWPORT
+                asg_jb95_html = gr.HTML(
+                    label="Visor Interactivo de Pantalla Completa Estilo JB95 (Clic+Arrastrar = Mover X/Y | Rueda Mouse = Ampliar Amplitud Y-Gain + Zoom X)",
+                    elem_id="jb95_full_station"
+                )
+
+                with gr.Row():
+                    with gr.Column(scale=3):
+                        asg_report_out = gr.Textbox(
+                            label="Diagnóstico del Barrido por Evolución Diferencial, Proyección a Línea Base, Conteo de Traslapes y Constantes Calculadas",
+                            lines=9
+                        )
+                    with gr.Column(scale=2):
                         asg_file_out = gr.File(
                             label="📥 Descargar Archivo .asc Generado (Formato Exacto IAR.asc / JB95)"
                         )
-
-                    with gr.Column(scale=2):
-                        asg_plot_out = gr.Plot(
-                            label="Vista Espejo JCP (Experimental Arriba +Y / Simulado y Líneas Stick Asignadas Abajo -Y) + Residuales"
-                        )
-                        asg_report_out = gr.Textbox(
-                            label="Resumen Estadístico de la Asignación Cuántica Automática",
+                        asg_preview_out = gr.Textbox(
+                            label="Vista Previa del Archivo .asc Generado (Tipo J' Ka' Kc' J'' Ka'' Kc'' Int Freq_Exp Freq_Calc Residual)",
                             lines=6
                         )
-                        asg_preview_out = gr.Textbox(
-                            label="Vista Previa del Archivo .asc Generado (Formato Exacto JB95: Tipo J' Ka' Kc' J'' Ka'' Kc'' Int Freq_Exp Freq_Calc Residual)",
-                            lines=9
-                        )
-                        asg_table_out = gr.Dataframe(
-                            headers=["Tipo", "Nivel Sup (J' Ka' Kc')", "Nivel Inf (J'' Ka'' Kc'')", "Rama", "Int (JB95)", "Freq Exp (MHz)", "Freq Calc (MHz)", "Residual (MHz)"],
-                            label="Tabla Interactiva de Transiciones Cuánticas Asignadas"
-                        )
 
-                gr.Markdown(
-                    """
-                    ---
-                    ### B. Ajuste Autónomo de Contorno por Evolución Diferencial (Sin Asignación de Líneas)
-                    Prueba cómo el algoritmo híbrido de **Evolución Diferencial + Simplex** deduce las constantes del estado excitado $(A', B', C')$ partiendo de valores iniciales erróneos sobre el contorno completo.
-                    """
-                )
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        fit_mol = gr.Dropdown(
-                            choices=list(PRESETS.keys())[:9],
-                            value="Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)",
-                            label="1. Molécula Objetivo (Incluye Carbazol Dr. Leonardo)"
-                        )
-                        fit_band_dropdown = gr.Dropdown(
-                            choices=BAND_TYPE_CHOICES,
-                            value=BAND_TYPE_CHOICES[0],
-                            label="2. Criterio de Selección Espectral (Tipo a / b / c / Híbrido)"
-                        )
-                        fit_ham_dropdown = gr.Dropdown(
-                            choices=HAMILTONIAN_CHOICES,
-                            value=HAMILTONIAN_CHOICES[0],
-                            label="3. Modelo Hamiltoniano durante el Ajuste"
-                        )
-                        fit_noise = gr.Slider(0.5, 10.0, value=3.0, step=0.5, label="Ruido Experimental Gaussiano (%)")
-                        fit_iter = gr.Slider(5, 30, value=12, step=1, label="Generaciones Evolutivas (Iteraciones)")
-                        btn_fit = gr.Button("🚀 Ejecutar Ajuste Evolutivo de Contorno", variant="primary", size="lg")
+                with gr.Accordion("📊 Tabla Completa de Picos Proyectados / Líneas Asignadas (Con Indicador de Traslape ×N) y Gráfica Estática de Publicación", open=False):
+                    asg_table_out = gr.Dataframe(
+                        headers=[
+                            "Pico #", "Estado / Traslape", "Tipo",
+                            "Nivel Sup (J' Ka' Kc')", "Nivel Inf (J'' Ka'' Kc'')",
+                            "Rama", "Int (JB95)", "Freq Exp (MHz)", "Freq Calc (MHz)", "Residual (MHz)"
+                        ],
+                        label="Tabla Interactiva de Picos Experimentales Proyectados y Transiciones Cuánticas Asignadas"
+                    )
+                    asg_plot_out = gr.Plot(
+                        label="Gráfica Estática de Publicación (Experimental + Proyecciones a Línea Base Arriba / Simulación Óptima Abajo + Residuales)"
+                    )
 
-                    with gr.Column(scale=2):
-                        fit_plot_out = gr.Plot(label="Convergencia del Contorno en Modo Espejo y Espectro de Residuales")
-                        fit_report_out = gr.Textbox(label="Parámetros Moleculares Recuperados vs. Referencia Experimental", lines=7)
+                with gr.Accordion("🧪 B. Demostración Adicional: Ajuste Autónomo de Contorno por Evolución Diferencial sobre Espectros Sintéticos", open=False):
+                    gr.Markdown(
+                        """
+                        Prueba cómo el algoritmo híbrido de **Evolución Diferencial + Simplex** deduce las constantes del estado excitado $(A', B', C')$ partiendo de valores iniciales desplazados sobre el contorno completo.
+                        """
+                    )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            fit_mol = gr.Dropdown(
+                                choices=list(PRESETS.keys())[:9],
+                                value="Carbazol (Álvarez-Valtierra & Pratt 2006 | Datos Reales PmtFla & IAR.asc)",
+                                label="1. Molécula Objetivo (Incluye Carbazol Dr. Leonardo)"
+                            )
+                            fit_band_dropdown = gr.Dropdown(
+                                choices=BAND_TYPE_CHOICES,
+                                value=BAND_TYPE_CHOICES[0],
+                                label="2. Criterio de Selección Espectral (Tipo a / b / c / Híbrido)"
+                            )
+                            fit_ham_dropdown = gr.Dropdown(
+                                choices=HAMILTONIAN_CHOICES,
+                                value=HAMILTONIAN_CHOICES[0],
+                                label="3. Modelo Hamiltoniano durante el Ajuste"
+                            )
+                            fit_noise = gr.Slider(0.5, 10.0, value=3.0, step=0.5, label="Ruido Experimental Gaussiano (%)")
+                            fit_iter = gr.Slider(5, 30, value=12, step=1, label="Generaciones Evolutivas (Iteraciones)")
+                            btn_fit = gr.Button("🚀 Ejecutar Ajuste Evolutivo de Contorno", variant="primary", size="lg")
+
+                        with gr.Column(scale=2):
+                            fit_plot_out = gr.Plot(label="Convergencia del Contorno en Modo Espejo y Espectro de Residuales")
+                            fit_report_out = gr.Textbox(label="Parámetros Moleculares Recuperados vs. Referencia Experimental", lines=7)
 
             # =========================================================================
             # TAB 3: QUÍMICA CUÁNTICA 3D & DIBUJO MOLECULAR (TENSOR DE INERCIA -> A,B,C)
@@ -2285,9 +2362,20 @@ def build_gradio_app():
             asg_origin,
             asg_trot, asg_fwhm, asg_jmax,
             asg_band_mode, asg_ham_mode,
-            asg_tol, asg_min_pk, asg_refine_chk
+            asg_tol, asg_min_pk,
+            asg_refine_chk, asg_planar_chk, asg_de_gens
         ]
-        asg_outputs = [asg_plot_out, asg_report_out, asg_preview_out, asg_table_out, asg_file_out]
+        asg_outputs = [
+            asg_jb95_html,
+            asg_plot_out,
+            asg_report_out,
+            asg_preview_out,
+            asg_table_out,
+            asg_file_out,
+            asg_a0, asg_b0, asg_c0,
+            asg_a1, asg_b1, asg_c1,
+            asg_origin
+        ]
 
         btn_goto_assign.click(
             fn=lambda x0, y0, z0, x1, y1, z1: (x0, y0, z0, x1, y1, z1, gr.Tabs(selected="tab_fit")),
@@ -2299,17 +2387,23 @@ def build_gradio_app():
             outputs=asg_outputs
         )
 
-        # Callbacks for Tab 2
+        # Callbacks for Tab 2 (JB95 Workstation & Differential Evolution Assigner)
         asg_source_dropdown.change(
             fn=on_asg_source_change,
             inputs=[asg_source_dropdown],
             outputs=[
                 asg_a0, asg_b0, asg_c0,
                 asg_a1, asg_b1, asg_c1,
-                asg_origin, asg_fwhm, asg_band_mode, asg_tol
+                asg_origin, asg_fwhm, asg_band_mode, asg_tol, asg_planar_chk
             ]
         ).then(
             fn=run_automatic_line_assignment_ui,
+            inputs=asg_inputs,
+            outputs=asg_outputs
+        )
+
+        btn_run_de_assign.click(
+            fn=run_de_line_assignment_ui,
             inputs=asg_inputs,
             outputs=asg_outputs
         )

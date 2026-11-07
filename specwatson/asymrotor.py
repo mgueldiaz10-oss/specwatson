@@ -569,7 +569,7 @@ def convergent_grid_fit(
 
     grid_size = max(3, min(int(grid_size), 11))
     n_levels = max(1, min(int(n_levels), 6))
-    j_grid = min(int(JMax) if int(JMax) > 0 else 24, 22)
+    j_grid = min(int(JMax) if int(JMax) > 0 else 35, 45)
 
     # Pre-calcular estadísticas de y_exp para regresión lineal analítica vectorizada
     y_mean = float(np.mean(y_arr))
