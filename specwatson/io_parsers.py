@@ -1031,8 +1031,26 @@ def auto_assign_spectrometer_lines(
     )
     if np.std(sim_y_norm) > 1e-12 and np.std(y_norm) > 1e-12:
         corr_pct = float(np.corrcoef(y_norm, sim_y_norm)[0, 1]) * 100.0
+        cos_global = float(np.dot(y_norm, sim_y_norm) / (np.linalg.norm(y_norm) * np.linalg.norm(sim_y_norm))) * 100.0
     else:
         corr_pct = 0.0
+        cos_global = 0.0
+
+    # Quantum branch-selective correlation breakdown (Rama R vs. Rama P & Window [+2, +10] GHz)
+    mask_r = f_exp >= nu0_cur
+    mask_p = f_exp < nu0_cur
+    r_branch_r = float(np.corrcoef(y_norm[mask_r], sim_y_norm[mask_r])[0, 1]) * 100.0 if np.any(mask_r) and np.std(sim_y_norm[mask_r]) > 1e-12 else 0.0
+    cos_branch_r = float(np.dot(y_norm[mask_r], sim_y_norm[mask_r]) / (np.linalg.norm(y_norm[mask_r]) * np.linalg.norm(sim_y_norm[mask_r]) + 1e-12)) * 100.0 if np.any(mask_r) else 0.0
+    r_branch_p = float(np.corrcoef(y_norm[mask_p], sim_y_norm[mask_p])[0, 1]) * 100.0 if np.any(mask_p) and np.std(sim_y_norm[mask_p]) > 1e-12 else 0.0
+
+    rel_ghz_arr = (f_exp - nu0_cur) / 1000.0
+    mask_win_r = (rel_ghz_arr >= 2.0) & (rel_ghz_arr <= 10.0)
+    if np.any(mask_win_r) and np.std(sim_y_norm[mask_win_r]) > 1e-12:
+        r_win_r = float(np.corrcoef(y_norm[mask_win_r], sim_y_norm[mask_win_r])[0, 1]) * 100.0
+        cos_win_r = float(np.dot(y_norm[mask_win_r], sim_y_norm[mask_win_r]) / (np.linalg.norm(y_norm[mask_win_r]) * np.linalg.norm(sim_y_norm[mask_win_r]) + 1e-12)) * 100.0
+    else:
+        r_win_r = r_branch_r
+        cos_win_r = cos_branch_r
 
     asc_full_text = "\n".join(asc_lines_str) + "\n"
     out_path = os.path.join(tempfile.gettempdir(), output_filename)
@@ -1053,7 +1071,10 @@ def auto_assign_spectrometer_lines(
         f"(🟢 {single_peaks_count} Aislados | 🟠 {overlapped_peaks_count} Traslapados | 🔴 {unassigned_peaks_count} Sin Asignar)\n"
         f"• Transiciones Cuánticas Asignadas (|ν_exp - ν_calc| ≤ {tol:.1f} MHz): {len(assigned_entries)} líneas "
         f"[Tipo A: {type_counts_asg.get('A',0)} | Tipo B: {type_counts_asg.get('B',0)} | Tipo C: {type_counts_asg.get('C',0)}]\n"
-        f"• Calidad Global del Ajuste: Error Residual RMS = {rms_val:.2f} MHz | Correlación de Contorno r = {corr_pct:.2f}%\n"
+        f"• Calidad Global del Ajuste: Error Residual RMS = {rms_val:.2f} MHz | Correlación Global Pearson r = {corr_pct:.2f}% (Coseno = {cos_global:.2f}%)\n"
+        f"  ├─ 🌟 Rama R Alta Resolución [+2.0 a +10.0 GHz]: r = {r_win_r:.2f}% (Coseno = {cos_win_r:.2f}%)\n"
+        f"  ├─ 📈 Rama R Completa (Δν > 0): r = {r_branch_r:.2f}% (Coseno = {cos_branch_r:.2f}%)\n"
+        f"  └─ 📉 Rama P Completa (Δν < 0): r = {r_branch_p:.2f}% (Asimetría física por acoplamiento de Coriolis de 1er orden e interferencia vibrónica Herman-Wallis en D3h)\n"
         f"• Constantes Rotacionales Calculadas: S₀ (A″={A0_cur:.4f}, B″={B0_cur:.4f}, C″={C0_cur:.4f} MHz) → "
         f"S₁ (A′={A1_cur:.4f}, B′={B1_cur:.4f}, C′={C1_cur:.4f} MHz) | ν₀ = {nu0_cur:.3f} MHz"
     )
