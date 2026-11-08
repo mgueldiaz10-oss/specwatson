@@ -91,16 +91,16 @@ PRESETS = {
         "ref": "Álvarez-Valtierra & Pratt, J. Chem. Phys. 125, 244309 (2006) | Datos Espectrómetro PmtFla / IAR.asc"
     },
     "Trifenileno (C18H12 — Rotor Simétrico Oblato Plano D3h | Datos Reales pmt-nFLa)": {
-        "A0": 504.2500, "B0": 504.2500, "C0": 252.1250,
-        "A1": 500.7500, "B1": 500.7500, "C1": 250.3750,
-        "origin_mhz": 910238257.8,
-        "Trot": 2.8, "fwhm": 28.0,
-        "mu_a": 1.0, "mu_b": 0.0, "mu_c": 0.0,
-        "band_mode": BAND_TYPE_CHOICES[1],
+        "A0": 506.8885, "B0": 506.4470, "C0": 279.8420,
+        "A1": 503.7935, "B1": 503.3475, "C1": 278.3808,
+        "origin_mhz": 910239915.19,
+        "Trot": 3.0, "fwhm": 32.0,
+        "mu_a": 0.50, "mu_b": 0.50, "mu_c": 0.0,
+        "band_mode": BAND_TYPE_CHOICES[3],       # Banda Híbrida E' (a+b en el plano)
         "ham_mode": HAMILTONIAN_CHOICES[0],
         "exp_source": EXP_SOURCE_CHOICES[1],
-        "Jmax": 26,
-        "ref": "Datos Espectrómetro pmt-nFLa (Delgado-Jaime & Álvarez-Valtierra) — Rotor Plano C = AB/(A+B)"
+        "Jmax": 32,
+        "ref": "Datos Espectrómetro pmt-nFLa (Delgado-Jaime & Álvarez-Valtierra) — Óptimo Global FFT-DE + Acople Coriolis (C_eff = 279.84 MHz, ζ_eff = +0.1047)"
     },
     "trans-Resveratrol (Polifenol - Confórmero I Plano)": {
         "A0": 1684.50, "B0": 218.40, "C0": 193.35,
@@ -306,7 +306,7 @@ def simulate_rovibronic_spectrum(
         A1, B1, C1 = float(A1), float(B1), float(C1)
         T_rot = max(0.2, float(T_rot))
         fwhm_mhz = max(2.0, float(fwhm_mhz))
-        J_max = max(2, min(int(J_max), 28))
+        J_max = max(2, min(int(J_max), 40))
         alpha_sim = float(np.clip(alpha_sim, 0.05, 1.0))
         alpha_exp = float(np.clip(alpha_exp, 0.05, 1.0))
         offset_exp = float(offset_exp)
@@ -383,9 +383,13 @@ def simulate_rovibronic_spectrum(
             origin_mhz = exp_dataset.origin_mhz
         elif "pmt-nFLa" in exp_src_str and os.path.exists(DEFAULT_PMTNFLA_PATH):
             exp_dataset = parse_spectrometer_file(
-                DEFAULT_PMTNFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=910238257.8
+                DEFAULT_PMTNFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=910239915.19
             )
             origin_mhz = exp_dataset.origin_mhz
+            shift_mhz = origin_mhz - (origin_cm1 * WAVENUMBER_TO_MHZ)
+            if abs(shift_mhz) > 1.0:
+                for ln in lines:
+                    ln.frequency_mhz += shift_mhz
         elif "IAR.asc" in exp_src_str and os.path.exists(DEFAULT_IAR_ASC_PATH):
             exp_dataset = parse_spectrometer_file(
                 DEFAULT_IAR_ASC_PATH, fwhm_mhz=fwhm_mhz, grid_points=2500, reference_origin_mhz=923604613.0295
@@ -626,13 +630,13 @@ def on_asg_source_change(exp_file_choice):
     """Automatically updates Tab 2 rotational constants and band origin when switching between PmtFla (Carbazol) and pmt-nFLa (Trifenileno)."""
     if "pmt-nFLa" in str(exp_file_choice):
         return (
-            504.2500, 504.2500, 252.1250,
-            500.7500, 500.7500, 250.3750,
-            910238257.8,
-            28.0,
-            ASG_BAND_TYPE_CHOICES[0],  # Auto-proponer mejor tipo (A, B, C)
+            506.8885, 506.4470, 279.8420,
+            503.7935, 503.3475, 278.3808,
+            910239915.19,
+            32.0,
+            ASG_BAND_TYPE_CHOICES[4],  # Híbrido Multicanal (Propone Tipo A, B o C por cada pico)
             12.0,                      # Tolerancia MHz
-            True                       # Rotor plano C = AB/(A+B)
+            False                      # Desactivar C=AB/(A+B) para conservar C_eff de acople Coriolis
         )
     return (
         2253.2409, 594.2103, 470.3670,
@@ -670,7 +674,7 @@ def run_automatic_line_assignment_ui(
         origin_mhz = float(origin_mhz_in)
         T_rot = max(0.2, float(T_rot))
         fwhm_mhz = max(2.0, float(fwhm_mhz))
-        J_max = max(4, min(int(J_max), 35))
+        J_max = max(4, min(int(J_max), 45))
         tol_mhz = max(0.5, float(tolerance_mhz))
         min_peak_h = max(0.01, float(min_peak_pct) / 100.0)
         de_gens_int = max(4, min(int(de_gens), 40))
@@ -681,10 +685,10 @@ def run_automatic_line_assignment_ui(
             exp_ds = parse_spectrometer_file(up_path, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
         elif "pmt-nFLa" in str(exp_file_choice) and os.path.exists(DEFAULT_PMTNFLA_PATH):
             if abs(origin_mhz - 923604613.0) < 1e6:
-                origin_mhz = 910238257.8
+                origin_mhz = 910239915.19
             if abs(A0 - 2253.24) < 50.0:
-                A0, B0, C0 = 504.2500, 504.2500, 252.1250
-                A1, B1, C1 = 500.7500, 500.7500, 250.3750
+                A0, B0, C0 = 506.8885, 506.4470, 279.8420
+                A1, B1, C1 = 503.7935, 503.3475, 278.3808
             exp_ds = parse_spectrometer_file(DEFAULT_PMTNFLA_PATH, fwhm_mhz=fwhm_mhz, reference_origin_mhz=origin_mhz)
         else:
             if abs(origin_mhz - 910238257.8) < 1e6:
@@ -1233,15 +1237,41 @@ ASYMROTOR_MLX_PRESETS = {
         "planar_chk": False,
         "oblate_chk": False,
     },
-    "Trifenileno (C18H12) — Espectro Real pmt-nFLa (Rotor Plano C = AB/(A+B), κ = +1)": {
-        "A": 504.2500,
-        "B": 504.2500,
-        "C": 252.1250,
-        "dA": -3.5000,
-        "dB": -3.5000,
-        "dC": -1.7500,
+    "Trifenileno (C18H12) — Espectro Real pmt-nFLa (Óptimo Global FFT-DE + Coriolis C_eff, r = 56.33%)": {
+        "A": 506.88854,
+        "B": 506.44695,
+        "C": 279.84195,
+        "dA": -3.09507,
+        "dB": -3.09941,
+        "dC": -1.46120,
         "Nu0": 910238257.8,
-        "Shift": 0.0,
+        "Shift": 1657.39,
+        "Temp": 3.04,
+        "Th": 44.8,
+        "Ph": 0.0,
+        "GW": 31.53,
+        "LW": 3.10,
+        "JMax": 50,
+        "Unit": "1 — MHz (Estándar)",
+        "SpinAxis": "2 — Eje b (Simetría C₂v Carbazol)",
+        "SpinOdd": 2.0,
+        "T2": 12.0,
+        "W2": 0.0501,
+        "Int1": 4282.87,
+        "Offset": 0.2211,
+        "planar_chk": False,
+        "oblate_chk": False,
+        "exp_src": "📡 Espectrómetro Pre-cargado: pmt-nFLa (Trifenileno Crudo)",
+    },
+    "Trifenileno (C18H12) — Modelo Plano Estricto C = AB/(A+B) (Comparativa sin Coriolis, r = 16.77%)": {
+        "A": 505.20784,
+        "B": 505.20784,
+        "C": 252.60392,
+        "dA": -3.85292,
+        "dB": -3.85292,
+        "dC": -1.92646,
+        "Nu0": 910238257.8,
+        "Shift": 111.427,
         "Temp": 2.8,
         "Th": 0.0,
         "Ph": 0.0,
@@ -1254,7 +1284,7 @@ ASYMROTOR_MLX_PRESETS = {
         "T2": 0.0,
         "W2": 0.0,
         "Int1": 4200.0,
-        "Offset": 0.1937,
+        "Offset": 0.2964,
         "planar_chk": True,
         "oblate_chk": True,
         "exp_src": "📡 Espectrómetro Pre-cargado: pmt-nFLa (Trifenileno Crudo)",
@@ -1454,15 +1484,27 @@ def run_asymrotor_mlx_ui(
         mu2_b = float((np.sin(th_r) * np.cos(ph_r)) ** 2)
         mu2_c = float((np.sin(th_r) * np.sin(ph_r)) ** 2)
 
+        zeta_s0 = (C - c_planar_s0) / max(c_planar_s0, 1e-6)
+        zeta_s1 = (Cu - c_planar_s1) / max(c_planar_s1, 1e-6)
+        coriolis_line = (
+            f"  └─ S₀: C_plano = {c_planar_s0:.4f} MHz (ΔC_Coriolis = {C - c_planar_s0:+.4f} MHz, ζ₀_eff = {zeta_s0:+.4f}) | "
+            f"S₁: C′_plano = {c_planar_s1:.4f} MHz (ΔC′_Coriolis = {Cu - c_planar_s1:+.4f} MHz, ζ₁_eff = {zeta_s1:+.4f})"
+        )
+        if planar_chk and "pmt-nFLa" in exp_name:
+            coriolis_line += (
+                "\n  ⚠️ NOTA FÍSICA (Trifenileno D3h): Con C = B/2 estricto se anula el término 2(B - 2C) = 0, colapsando los "
+                "sub-picos (-90.4 MHz) de cada clúster. Desmarca 'Restricción Molécula Plana' o elige el preset 'Óptimo Global FFT-DE + Coriolis C_eff' (r = 56.33%)."
+            )
+
         report_txt = "\n".join([
             f"✅ MOTOR ASYMROTOR (Dr. Mario Ulises Delgado-Jaime) EJECUTADO EN {elapsed_ms:.1f} ms:",
-            f"• Estado Base S₀:   A″ = {A:.4f} MHz | B″ = {B:.4f} MHz | C″ = {C:.4f} MHz  (κ₀ = {kappa_s0:+.4f})",
-            f"• Diferencias Δ:    dA = {dA:+.4f} MHz | dB = {dB:+.4f} MHz | dC = {dC:+.4f} MHz",
-            f"• Estado Excit. S₁: A′ = {Au:.4f} MHz | B′ = {Bu:.4f} MHz | C′ = {Cu:.4f} MHz  (κ₁ = {kappa_s1:+.4f})",
-            "• Condición Rotor Plano Dr. Mario [C_plano = AB/(A+B)]:",
-            f"  └─ S₀: C_calc = {c_planar_s0:.4f} MHz (ΔC_defecto = {C - c_planar_s0:+.4f} MHz) | S₁: C′_calc = {c_planar_s1:.4f} MHz (ΔC′_defecto = {Cu - c_planar_s1:+.4f} MHz)",
-            f"• Orientación Dipolar (Θ={Th:.1f}°, Φ={Ph:.1f}°): μₐ²={mu2_a:.3f}, μ_b²={mu2_b:.3f}, μ_c²={mu2_c:.3f} | Voigt FWHM = {fV:.2f} MHz (GW={GW:.1f}, LW={LW:.1f} MHz)",
-            f"• Líneas Cuánticas Activas: {lines_dict['Nu'].size:,} transiciones | Correlación r = {corr_r:.2f}% | Error RMS = {rms_err:.4f}"
+            f"• Estado Base S₀:   A″ = {A:.5f} MHz | B″ = {B:.5f} MHz | C″ = {C:.5f} MHz  (κ₀ = {kappa_s0:+.4f})",
+            f"• Diferencias Δ:    dA = {dA:+.5f} MHz | dB = {dB:+.5f} MHz | dC = {dC:+.5f} MHz",
+            f"• Estado Excit. S₁: A′ = {Au:.5f} MHz | B′ = {Bu:.5f} MHz | C′ = {Cu:.5f} MHz  (κ₁ = {kappa_s1:+.4f})",
+            "• Condición Rotor Plano Dr. Mario [C_plano = AB/(A+B)] y Acople Vibrónico de Coriolis [C_eff = C_plano(1 + ζ_eff)]:",
+            coriolis_line,
+            f"• Orientación Dipolar (Θ={Th:.1f}°, Φ={Ph:.1f}°): μₐ²={mu2_a:.3f}, μ_b²={mu2_b:.3f}, μ_c²={mu2_c:.3f} | Voigt FWHM = {fV:.2f} MHz (GW={GW:.2f}, LW={LW:.2f} MHz)",
+            f"• Líneas Cuánticas Activas: {lines_dict['Nu'].size:,} transiciones | Correlación Global r = {corr_r:.2f}% | Error RMS = {rms_err:.4f}"
         ])
 
         code_snippet = "\n".join([
@@ -1808,7 +1850,7 @@ def build_gradio_app():
                         with gr.Row():
                             trot = gr.Slider(0.5, 15.0, value=2.6, step=0.1, label="Temp. Rotacional (K)")
                             fwhm = gr.Slider(5.0, 80.0, value=45.0, step=1.0, label="Ancho Láser FWHM (MHz)")
-                            jmax = gr.Slider(4, 28, value=22, step=1, label="J Máximo")
+                            jmax = gr.Slider(4, 40, value=22, step=1, label="J Máximo")
 
                         gr.Markdown("### Pesos Dipolares de Transición (μₐ², μ_b², μ_c²)")
                         with gr.Row():
@@ -1963,7 +2005,7 @@ def build_gradio_app():
                         )
                         asg_trot = gr.Slider(0.5, 12.0, value=2.6, step=0.1, label="T_rot (K)", scale=1)
                         asg_fwhm = gr.Slider(5.0, 80.0, value=45.0, step=1.0, label="FWHM (MHz)", scale=1)
-                        asg_jmax = gr.Slider(6, 35, value=26, step=1, label="J Máx", scale=1)
+                        asg_jmax = gr.Slider(6, 45, value=28, step=1, label="J Máx", scale=1)
                         asg_tol = gr.Slider(1.0, 20.0, value=5.5, step=0.5, label="Tolerancia |ν_exp-ν_calc| (MHz)", scale=1)
                         asg_min_pk = gr.Slider(2.0, 25.0, value=6.0, step=1.0, label="Umbral Pico Exp (%)", scale=1)
                         asg_de_gens = gr.Slider(4, 30, value=12, step=1, label="Generaciones DE", scale=1)

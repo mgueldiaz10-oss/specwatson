@@ -582,6 +582,9 @@ def convergent_grid_fit(
     n_pad = min(4500, max(2000, int((x_max - x_min + 2.0 * max_pad) / 2.5)))
     x_pad = np.linspace(x_min - max_pad, x_max + max_pad, n_pad)
 
+    is_quasi_oblate_coriolis = (not oblate_chk) and (not planar_chk) and (abs(A0 - B0) < 5.0)
+    db_minus_da0 = dB0 - dA0
+
     def _params_from_node(p1: float, p2: float) -> Tuple[float, float, float, float, float, float]:
         if oblate_chk:
             a_v = max(20.0, float(p1))
@@ -593,7 +596,12 @@ def convergent_grid_fit(
                 cu_v = planar_top_c(a_v + da_v, b_v + db_v)
                 dc_v = cu_v - c_v
             else:
-                dc_v = 0.5 * da_v
+                dc_v = (planar_top_c(a_v + da_v, b_v + db_v) - planar_top_c(a_v, b_v)) + dc_defect_offset
+        elif is_quasi_oblate_coriolis:
+            a_v, b_v, c_v = A0, B0, C0
+            da_v = float(p1)
+            db_v = da_v + db_minus_da0
+            dc_v = float(p2)
         else:
             a_v, b_v = A0, B0
             c_v = planar_top_c(a_v, b_v) if planar_chk else C0
@@ -676,6 +684,11 @@ def convergent_grid_fit(
         cur_p2 = dA0
         axis1_label = "A″ Basal S₀ (MHz)"
         axis2_label = "dA = A′ - A″ (MHz)"
+    elif is_quasi_oblate_coriolis:
+        cur_p1 = dA0
+        cur_p2 = dC0
+        axis1_label = "dA = A′ - A″ (MHz)"
+        axis2_label = "dC_eff = C′ - C″ (MHz)"
     else:
         cur_p1 = dA0
         cur_p2 = dB0
@@ -756,7 +769,21 @@ def convergent_grid_fit(
             return y_arr - (int_c * y_u + float(coef[1]))
 
         p_init = np.array([best_overall["p1"], best_overall["p2"], best_overall["shift"]], dtype=float)
-        lsq = least_squares(_polish_res, p_init, diff_step=0.01, max_nfev=12)
+        lv_last = level_history[-1]
+        p1_lo, p1_hi = float(np.min(lv_last["p1_vec"])), float(np.max(lv_last["p1_vec"]))
+        p2_lo, p2_hi = float(np.min(lv_last["p2_vec"])), float(np.max(lv_last["p2_vec"]))
+        p_init[0] = np.clip(p_init[0], p1_lo + 1e-5, p1_hi - 1e-5)
+        p_init[1] = np.clip(p_init[1], p2_lo + 1e-5, p2_hi - 1e-5)
+        lsq = least_squares(
+            _polish_res,
+            p_init,
+            bounds=(
+                [p1_lo, p2_lo, best_overall["shift"] - 40.0],
+                [p1_hi, p2_hi, best_overall["shift"] + 40.0],
+            ),
+            diff_step=0.01,
+            max_nfev=12,
+        )
         pol_node = _eval_node(float(lsq.x[0]), float(lsq.x[1]), float(lsq.x[2]), 0.0)
         if pol_node["rms"] <= best_overall["rms"]:
             pol_node["p1"] = float(lsq.x[0])

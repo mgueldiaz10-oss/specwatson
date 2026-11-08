@@ -153,57 +153,85 @@ class AsymmetricRotorHamiltonian:
 
     def solve_j(self, J: int) -> Tuple[np.ndarray, np.ndarray, List[Tuple[int, int]]]:
         """
-        Diagonalizes the Hamiltonian for angular momentum J and enforces exact Wang
-        symmetrization on degenerate asymmetry doublets.
+        Diagonalizes the Hamiltonian for angular momentum J by splitting into the
+        four exact Wang symmetry blocks (K even/odd, symmetric/antisymmetric under K <-> -K),
+        guaranteeing exact eigenvectors and (Ka, Kc) parities even for degenerate oblate
+        (A = B, kappa = +1) and prolate (B = C, kappa = -1) symmetric tops.
         Returns:
             energies: Array of 2J+1 eigenvalues sorted in ascending order (MHz).
             eigenvectors: (2J+1, 2J+1) matrix where column i is the eigenvector for energy i.
             labels: List of (Ka, Kc) quantum number assignments for each level.
         """
         H = self.build_matrix(J)
-        energies, vectors = np.linalg.eigh(H)
-        labels = self._assign_quantum_labels(J, energies)
+        n = 2 * J + 1
+        K = np.arange(-J, J + 1, dtype=np.int64)
 
-        # Symmetrize nearly degenerate K-doublets into exact Wang states (+/- parity under K -> -K)
-        dim = 2 * J + 1
-        i = 0
-        while i < dim:
-            Ka, Kc = labels[i]
+        E = np.zeros(n, dtype=np.float64)
+        V = np.zeros((n, n), dtype=np.float64)
+        Blk = np.zeros(n, dtype=np.int64)
+        c = 0
+        inv_sqrt2 = 1.0 / np.sqrt(2.0)
+
+        for kp in (0, 1):
+            Kpos = K[(K >= 0) & ((np.abs(K) % 2) == kp)]
+            for s in (1, -1):
+                kk = Kpos[(Kpos > 0) | (s > 0)]
+                m = int(kk.size)
+                if m == 0:
+                    continue
+                Ub = np.zeros((n, m), dtype=np.float64)
+                for col_idx, k_val in enumerate(kk):
+                    if k_val == 0:
+                        Ub[J, col_idx] = 1.0
+                    else:
+                        Ub[J + int(k_val), col_idx] = inv_sqrt2
+                        Ub[J - int(k_val), col_idx] = s * inv_sqrt2
+                Hb = Ub.T @ H @ Ub
+                Hb = 0.5 * (Hb + Hb.T)
+                evals, evecs = np.linalg.eigh(Hb)
+                # Fix deterministic sign on each eigenvector so upper/lower states never flip randomly
+                for col_idx in range(m):
+                    v_col = evecs[:, col_idx]
+                    max_i = int(np.argmax(np.abs(v_col)))
+                    if v_col[max_i] < 0:
+                        evecs[:, col_idx] = -v_col
+                E[c:c + m] = evals
+                V[:, c:c + m] = Ub @ evecs
+                Blk[c:c + m] = 2 * kp + (1 if s < 0 else 0) + 1
+                c += m
+
+        order = np.argsort(E, kind="mergesort")
+        energies = E[order]
+        vectors = V[:, order]
+        Blk = Blk[order]
+
+        # Exact parities under D2 rotations (about a, b, c)
+        kp_arr = (Blk >= 3).astype(np.int64)
+        P_arr = 1 - 2 * ((Blk - 1) % 2 == 1).astype(np.int64)
+        Oa = kp_arr == 1
+        Ob = (J % 2 != 0) != (P_arr < 0)
+        Oc = np.logical_xor(Oa, Ob)
+
+        nn = np.arange(n, dtype=np.int64)
+        Ka = (nn + 1) // 2
+        Kc = J - (nn // 2)
+        Bad = ((Ka % 2) != Oa) | ((Kc % 2) != Oc)
+        for i in range(n - 1):
             if (
-                i + 1 < dim
-                and labels[i + 1][0] == Ka
-                and Ka > 0
-                and abs(energies[i + 1] - energies[i]) < 1e-3
+                Bad[i]
+                and Bad[i + 1]
+                and ((Ka[i + 1] % 2) == Oa[i])
+                and ((Kc[i + 1] % 2) == Oc[i])
+                and ((Ka[i] % 2) == Oa[i + 1])
+                and ((Kc[i] % 2) == Oc[i + 1])
             ):
-                u1 = vectors[:, i].copy()
-                u2 = vectors[:, i + 1].copy()
+                # Swap both labels and eigenvectors/energies so index i always matches standard (Ka, Kc) slot
+                Ka[i], Ka[i + 1] = Ka[i + 1], Ka[i]
+                Kc[i], Kc[i + 1] = Kc[i + 1], Kc[i]
+                Bad[i] = False
+                Bad[i + 1] = False
 
-                # Symmetric combination (+): v(-K) = +v(K)
-                v_plus = u1 + u1[::-1]
-                n_plus = np.linalg.norm(v_plus)
-                if n_plus < 1e-6:
-                    v_plus = u2 + u2[::-1]
-                    n_plus = np.linalg.norm(v_plus)
-                if n_plus > 0:
-                    v_plus /= n_plus
-
-                # Antisymmetric combination (-): v(-K) = -v(K)
-                v_minus = u1 - u1[::-1]
-                n_minus = np.linalg.norm(v_minus)
-                if n_minus < 1e-6:
-                    v_minus = u2 - u2[::-1]
-                    n_minus = np.linalg.norm(v_minus)
-                if n_minus > 0:
-                    v_minus /= n_minus
-
-                # In I^r representation: gamma = (J + Ka + Kc) % 2
-                gamma_i = (J + Ka + Kc) % 2
-                vectors[:, i] = v_minus if gamma_i == 1 else v_plus
-                vectors[:, i + 1] = v_plus if gamma_i == 1 else v_minus
-                i += 2
-            else:
-                i += 1
-
+        labels = [(int(Ka[i]), int(Kc[i])) for i in range(n)]
         return energies, vectors, labels
 
     def _assign_quantum_labels(self, J: int, sorted_energies: np.ndarray) -> List[Tuple[int, int]]:

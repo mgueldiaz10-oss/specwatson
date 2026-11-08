@@ -679,17 +679,29 @@ def auto_assign_spectrometer_lines(
                 (-orig_span, orig_span),
             ]
             try:
+                f0_de = float(_de_objective([0.0, 0.0, 0.0, 0.0]))
+                rng_de = np.random.default_rng(42)
+                n_pop_de = 24
+                init_pop_de = rng_de.uniform(
+                    [b[0] for b in bounds_de],
+                    [b[1] for b in bounds_de],
+                    size=(n_pop_de, len(bounds_de)),
+                )
+                init_pop_de[0] = [0.0, 0.0, 0.0, 0.0]
                 de_opt = differential_evolution(
                     _de_objective,
                     bounds=bounds_de,
+                    init=init_pop_de,
                     maxiter=max(4, min(int(de_generations), 30)),
-                    popsize=6,
                     mutation=(0.5, 1.0),
                     recombination=0.75,
                     seed=42,
                     polish=False,
                 )
-                dA_b, dB_b, dC_b, dnu_b = [float(v) for v in de_opt.x]
+                if float(de_opt.fun) < f0_de:
+                    dA_b, dB_b, dC_b, dnu_b = [float(v) for v in de_opt.x]
+                else:
+                    dA_b, dB_b, dC_b, dnu_b = 0.0, 0.0, 0.0, 0.0
                 A1_cur, B1_cur, C1_cur = _enforce_rotor_order(
                     A1_cur + dA_b, B1_cur + dB_b, C1_cur + dC_b, planar_constraint=planar_constraint
                 )
@@ -801,7 +813,17 @@ def auto_assign_spectrometer_lines(
 
             try:
                 p0 = np.array([0.0, A1_cur, B1_cur, C1_cur], dtype=np.float64)
-                opt = least_squares(fit_res_func, p0, xtol=1e-6, ftol=1e-6, max_nfev=35)
+                opt = least_squares(
+                    fit_res_func,
+                    p0,
+                    bounds=(
+                        [-35.0, max(10.0, A1_cur - 2.5), max(10.0, B1_cur - 2.5), max(8.0, C1_cur - 2.5)],
+                        [+35.0, A1_cur + 2.5, B1_cur + 2.5, C1_cur + 2.5],
+                    ),
+                    xtol=1e-6,
+                    ftol=1e-6,
+                    max_nfev=30,
+                )
                 d_nu_opt, A1_opt, B1_opt, C1_opt = [float(v) for v in opt.x]
                 A1_cur, B1_cur, C1_cur = _enforce_rotor_order(
                     A1_opt, B1_opt, C1_opt, planar_constraint=planar_constraint
