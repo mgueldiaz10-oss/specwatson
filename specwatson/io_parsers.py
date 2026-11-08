@@ -142,6 +142,9 @@ class AutoAssignmentResult:
     baseline_raw: float = 0.0
     sim_freq_mhz: np.ndarray = field(default_factory=lambda: np.array([]))
     sim_intensity_norm: np.ndarray = field(default_factory=lambda: np.array([]))
+    r_branch_r: float = 0.0
+    r_win_r: float = 0.0
+    cos_global: float = 0.0
 
 
 def _extract_constants_from_jb95_lines(lines: List[RovibronicLine]) -> Optional[Dict[str, float]]:
@@ -1103,6 +1106,9 @@ def auto_assign_spectrometer_lines(
         baseline_raw=baseline_raw,
         sim_freq_mhz=sim_f_mhz,
         sim_intensity_norm=sim_y_norm,
+        r_branch_r=r_branch_r,
+        r_win_r=r_win_r,
+        cos_global=cos_global,
     )
 
 
@@ -1164,6 +1170,9 @@ def render_jb95_workstation_html(
         "C1": round(float(c_info.get("C1", 0.0)), 4),
         "rms_mhz": round(asg_res.rms_residual_mhz, 2),
         "corr_pct": round(asg_res.correlation_pct, 2),
+        "r_win_r": round(float(getattr(asg_res, "r_win_r", asg_res.correlation_pct)), 2),
+        "r_branch_r": round(float(getattr(asg_res, "r_branch_r", asg_res.correlation_pct)), 2),
+        "cos_global": round(float(getattr(asg_res, "cos_global", 0.0)), 2),
         "tol_mhz": round(float(tolerance_mhz), 2),
         "single_cnt": asg_res.single_peaks_count,
         "ovlp_cnt": asg_res.overlapped_peaks_count,
@@ -1443,7 +1452,7 @@ def render_jb95_workstation_html(
   document.getElementById('lblOvlp').textContent = `🟠 Traslapados: ${{M.ovlp_cnt}}`;
   document.getElementById('lblUnass').textContent = `🔴 Sin Asignar: ${{M.unass_cnt}}`;
   document.getElementById('lblConsts').textContent =
-    `S₀(${{M.A0}}, ${{M.B0}}, ${{M.C0}}) → S₁(${{M.A1}}, ${{M.B1}}, ${{M.C1}}) MHz | ν₀=${{M.nu0_mhz}} MHz | TipoProp=${{M.prop_type}} | RMS=${{M.rms_mhz}} MHz | r=${{M.corr_pct}}%`;
+    `S₀(${{M.A0}}, ${{M.B0}}, ${{M.C0}}) → S₁(${{M.A1}}, ${{M.B1}}, ${{M.C1}}) MHz | ν₀=${{M.nu0_mhz}} MHz | TipoProp=${{M.prop_type}} | RMS=${{M.rms_mhz}} MHz | r(Rama R)=${{M.r_win_r}}% | r(Global)=${{M.corr_pct}}%`;
   document.getElementById('stSummary').textContent =
     `Archivo: ${{M.filename}} | ${{M.asg_cnt}} transiciones en .asc | Tolerancia ±${{M.tol_mhz}} MHz`;
 
