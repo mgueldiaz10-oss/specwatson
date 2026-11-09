@@ -483,7 +483,7 @@ def simulate_rovibronic_spectrum(
             ax.plot(
                 rel_freq_ghz, y_sim_plotted,
                 color="#1d4ed8", lw=1.45, alpha=alpha_sim, zorder=4,
-                label=f"Simulado SpecWatson [{ham_short_label} · Tipo {sel_crit.upper()} · {sim_pos_label}]"
+                label=f"Simulado MELIORA [{ham_short_label} · Tipo {sel_crit.upper()} · {sim_pos_label}]"
             )
             ax.fill_between(
                 rel_freq_ghz, 0.0, y_sim_plotted,
@@ -738,7 +738,7 @@ def run_automatic_line_assignment_ui(
             de_generations=de_gens_int,
             planar_constraint=bool(planar_chk),
             fwhm_mhz=fwhm_mhz,
-            output_filename=f"Asignacion_{exp_ds.filename}_SpecWatson.asc"
+            output_filename=f"Asignacion_{exp_ds.filename}_MELIORA.asc"
         )
 
         # Render full-screen interactive JB95 Workstation HTML5 Canvas
@@ -939,7 +939,7 @@ def export_spectrum_high_dpi(
     )
 
     safe_mol = str(preset_name).split("(")[0].strip().replace(" ", "_").replace("-", "_")
-    filename = f"SpecWatson_{safe_mol}_{dpi_val}DPI.{ext}"
+    filename = f"MELIORA_{safe_mol}_{dpi_val}DPI.{ext}"
     out_path = os.path.join(tempfile.gettempdir(), filename)
     fig.savefig(out_path, dpi=dpi_val, bbox_inches="tight", facecolor="white")
     plt.close(fig)
@@ -1508,7 +1508,7 @@ def run_asymrotor_mlx_ui(
         ])
 
         code_snippet = "\n".join([
-            "# === 1. En Python (Google Colab / SpecWatson) ===",
+            "# === 1. En Python (Google Colab / MELIORA) ===",
             "from asymrotor import asym_rotor",
             "y_unit, lines = asym_rotor(",
             f"    x, {A:.4f}, {B:.4f}, {C:.4f}, {dA:.4f}, {dB:.4f}, {dC:.4f},",
@@ -1775,13 +1775,13 @@ def optimize_asymrotor_mlx_ui(
 def build_gradio_app():
     import gradio as gr
 
-    with gr.Blocks(title="SpecWatson · Espectroscopía Rovibrónica & Química Cuántica GPU") as demo:
+    with gr.Blocks(title="MELIORA · Molecular Electronic & Laser Interactions with Optimized Ro-vibronic Analysis") as demo:
         gr.Markdown(
             """
-            # 🔬 SpecWatson: Suite de Espectroscopía Rovibrónica & Química Cuántica en GPU
+            # 🔬 MELIORA
+            ### **M**olecular **E**lectronic & **L**aser **I**nteractions with **O**ptimized **R**o-vibronic **A**nalysis
             **Universidad de Guanajuato · División de Ciencias e Ingenierías (Campus León)**  
-            **Autor:** Miguel Díaz (Maestría en Ciencias) · **Dirección y Respaldo Científico:** Dr. Leonardo Álvarez-Valtierra & Dr. Alejandro Gil-Villegas (SNII Nivel III)  
-            *Simulación cuántica por Rotor Rígido y Hamiltoniano de Watson (Base de Wang), Reglas de Selección Tipo a/b/c, Asignación Automática de Líneas Cuánticas (`.asc` estilo JB95) desde datos crudos del espectrómetro (`PmtFla`) y Química Cuántica 3D.*
+            *Suite Computacional para Espectroscopía Rovibrónica de Alta Resolución, Asignación Cuántica JB95 & Optimización Global*
             """
         )
 
@@ -1799,7 +1799,7 @@ def build_gradio_app():
                     )
                     show_sim_chk = gr.Checkbox(
                         value=True,
-                        label="🔵 Mostrar Simulado (SpecWatson)",
+                        label="🔵 Mostrar Simulado (MELIORA)",
                         scale=1
                     )
                     overlay_exp_chk = gr.Checkbox(
@@ -1890,7 +1890,7 @@ def build_gradio_app():
                         btn_goto_assign = gr.Button("🎯 Ir a Asignación Automática de Líneas (.asc / JB95) desde PmtFla →", variant="secondary")
 
                     with gr.Column(scale=2):
-                        plot_out = gr.Plot(label="Espectro Experimental (Arriba +Y) vs. Simulado SpecWatson (Abajo -Y)")
+                        plot_out = gr.Plot(label="Espectro Experimental (Arriba +Y) vs. Simulado MELIORA (Abajo -Y)")
 
                         with gr.Accordion("🎛️ Controles de Visualización: Sub-bandas (a/b/c), Opacidad, Offset, Zoom y Exportación (300/600 DPI)", open=True):
                             with gr.Row():
@@ -1926,42 +1926,13 @@ def build_gradio_app():
                             export_file_out = gr.File(label="📄 Archivo Exportado (Haz clic en el enlace derecho para descargar a tu PC)")
 
                         stats_out = gr.Textbox(label="Diagnóstico Cuántico: Método, Reglas de Selección (a/b/c), Factor κ y Correlación Experimental", lines=7)
-
-                        with gr.Accordion("📖 Guía Conceptual Rápida: ¿Qué significan Espectros Tipo a/b/c, Momentos Dipolares (μ), Factor κ y Rotor Rígido?", open=False):
-                            gr.Markdown(
-                                r"""
-                                * **1. ¿Qué son los espectros Tipo $a$, Tipo $b$ y Tipo $c$?**  
-                                  Toda molécula tiene 3 ejes principales de inercia perpendiculares entre sí: **$a$** (el eje más largo, menor inercia $I_a$), **$b$** (eje corto en el plano molecular, inercia intermedia $I_b$) y **$c$** (perpendicular al plano aromático, mayor inercia $I_c$). Según hacia qué eje oscile el **momento dipolar de transición electrónica** al absorber el fotón UV, cambian las reglas cuánticas de selección $(\Delta K_a, \Delta K_c)$:
-                                  * **Tipo $a$ ($\mu_a^2 = 1$, $\Delta K_a = 0, \pm 2\text{ [par]}$, $\Delta K_c = \pm 1\text{ [impar]}$):** Genera una rama $Q$ central muy intensa y compacta en $\nu_0$.
-                                  * **Tipo $b$ ($\mu_b^2 = 1$, $\Delta K_a = \pm 1\text{ [impar]}$, $\Delta K_c = \pm 1\text{ [impar]}$):** **Caso del Carbazol** (donde el eje de simetría $C_2$ sobre el enlace N–H es el eje $b$). Produce una depresión o hueco característico justo en el origen $\nu_0$ y sub-bandas laterales $K_a$ bien resueltas.
-                                  * **Tipo $c$ ($\mu_c^2 = 1$, $\Delta K_a = \pm 1\text{ [impar]}$, $\Delta K_c = 0, \pm 2\text{ [par]}$):** Transición perpendicular al plano molecular.
-                                  * **Banda Híbrida:** Cuando la molécula carece de simetría alta (ej. 1-Naftol, Indol, Resveratrol), el dipolo apunta en diagonal entre los ejes y el espectro es una suma ponderada $\mu_a^2 I_a + \mu_b^2 I_b + \mu_c^2 I_c$.
-                                * **2. ¿Qué es el Factor $\kappa$ (Parámetro de Asimetría de Ray)?**  
-                                  Definido como $\kappa = \frac{2B - A - C}{A - C}$, mide la forma geométrica del rotor entre **$-1$ y $+1$**:
-                                  * **$\kappa = -1$:** Trompo simétrico **prolato** (forma alargada de cigarro: $A > B = C$). El Carbazol tiene $\kappa = -0.8611$ (rotor asimétrico casi prolato).
-                                  * **$\kappa = 0$:** Rotor de máxima asimetría ($B$ está exactamente a la mitad entre $A$ y $C$).
-                                  * **$\kappa = +1$:** Trompo simétrico **oblato** (forma de moneda/disco: $A = B > C$).
-                                * **3. ¿Qué diferencia hay entre "Rotor Rígido Puro" y "Hamiltoniano de Watson"?**  
-                                  * **Rotor Rígido Puro:** Considera la molécula como una estructura indeformable caracterizada únicamente por $(A, B, C)$ con constantes de distorsión iguales a cero ($\Delta_J = \Delta_{JK} = \Delta_K = \delta_J = \delta_K = 0$). A las bajas temperaturas del jet supersónico ($T_{\text{rot}} \approx 2 - 4\text{ K}$, $J \le 25$), la fuerza centrífuga es despreciable, por lo que programas clásicos como **JB95** resuelven el Carbazol con el modelo de Rotor Rígido.
-                                  * **Hamiltoniano de Watson (Reducción A):** Añade los 5 términos cuárticos de distorsión centrífuga para corregir el estiramiento de enlaces cuando se pueblan niveles $J$ muy altos.
-                                """
-                            )
+                        gr.Markdown("💡 *Para consultar la fundamentación teórica de reglas de selección, factor κ y Hamiltoniano de Watson, visita la pestaña **📖 5. Manual y Ayuda**.*")
 
             # =========================================================================
             # TAB 2: ESTACIÓN INTERACTIVA JB95 + BARRIDO POR EVOLUCIÓN DIFERENCIAL (.asc)
             # =========================================================================
             with gr.TabItem("🎯 2. Estación JB95 & Evolución Diferencial (.asc)", id="tab_fit"):
-                gr.Markdown(
-                    """
-                    ### 🎛️ Estación de Trabajo Interactiva Tipo `JB95` + Barrido por Evolución Diferencial y Proyección a Línea Base (`PmtFla` / `pmt-nFLa`)
-                    Replica y moderniza la interfaz de pantalla completa de **JET/BEAM 95 (`JB95`)** acoplada a **Evolución Diferencial (`DE`)**:
-                    * **Proyección Vertical a la Línea Base (`y = 0`):** El algoritmo barre todas las frecuencias de los datos crudos del espectrómetro, detecta cada máximo experimental con interpolación parabólica sub-MHz, genera un punto en la cúspide y **proyecta una línea vertical hacia abajo hasta la línea base (`y = 0`)**, simulando la asignación manual pico por pico en JB95.
-                    * **Identificación Visual de Líneas Traslapadas (`×N`):** Distingue automáticamente **🟢 Líneas Aisladas (`×1`, verde esmeralda)** de **🟠 Picos con Líneas Traslapadas (`×N`, ámbar con sub-sticks magenta individuales dentro del mismo pico)** y **🔴 Picos Sin Asignar (rojo punteado)**, además de un botón **`[⚠️ Ir a Traslape ➔]`** para saltar de un multiplete traslapado al siguiente.
-                    * **Navegación Interactiva por Mouse (Estilo JB95):**
-                      * **🖱️ Clic Izquierdo + Arrastrar:** Desplázate libremente de forma **horizontal** (recorrer frecuencias a lo largo de todo el espectro) y **vertical** (ajustar la posición de la línea base).
-                      * **⚙️ Rueda del Mouse (Scroll):** **Amplía la escala vertical de amplitud de los picos (`Y-Gain`)** y hace **zoom horizontal** al mismo tiempo para inspeccionar líneas muy cercanas o traslapadas (`Shift + Rueda` = solo amplitud vertical `Y-Gain`; `Ctrl + Rueda` = solo zoom horizontal de frecuencia).
-                    """
-                )
+                gr.Markdown("### 🎛️ Estación de Trabajo Interactiva Tipo JB95 & Asignación Cuántica por Evolución Diferencial")
 
                 with gr.Group():
                     with gr.Row():
@@ -2103,12 +2074,7 @@ def build_gradio_app():
             # TAB 3: QUÍMICA CUÁNTICA 3D & DIBUJO MOLECULAR (TENSOR DE INERCIA -> A,B,C)
             # =========================================================================
             with gr.TabItem("🧪 3. Geometría 3D & Química Cuántica", id="tab_qchem"):
-                gr.Markdown(
-                    r"""
-                    ### Del Dibujo Molecular o Nombre Químico a las Constantes Rotacionales (A, B, C), Factor κ y Dipolo (μ)
-                    Dibuja una molécula, elige una del catálogo (incluyendo **Carbazol, H₂O, CO₂, SO₂, H₂CO, Indol, Resveratrol**) o escribe su **nombre químico / código SMILES**. El motor optimiza la geometría 3D, diagonaliza el **Tensor de Inercia Isotópico**, obtiene **(A, B, C)**, el **Parámetro de Asimetría de Ray ($\kappa$)** y el **Momento Dipolar ($\vec{\mu}$)**, validándolos contra literatura experimental.
-                    """
-                )
+                gr.Markdown("### 🧪 Geometría 3D, Tensor de Inercia Isotópico & Estimación de Constantes Rotacionales (A, B, C)")
                 with gr.Row():
                     with gr.Column(scale=1):
                         q_catalog = gr.Dropdown(
@@ -2162,12 +2128,7 @@ def build_gradio_app():
             # TAB 4: MODO ASYMROTOR (.mlx / MATLAB Dr. Mario Delgado-Jaime & Trifenileno)
             # =========================================================================
             with gr.TabItem("📐 4. Modo AsymRotor (Dr. Mario .mlx & Trifenileno)", id="tab_asymrotor"):
-                gr.Markdown(
-                    r"""
-                    ### Motor Exacto `AsymRotor` (`AsymRotor.m` / `asymrotor.py` & `Simulacion_RotorRigido.mlx` — Dr. Mario Ulises Delgado-Jaime)
-                    Esta pestaña reproduce **exactamente los mismos controles, ecuaciones y estilo gráfico** del script de MATLAB [`Simulacion_RotorRigido.mlx`](file:///C:/Users/madia/Documents/antigravity/spect-watson/recursos/Simulacion_RotorRigido.mlx) y la función [`AsymRotor.m`](file:///C:/Users/madia/Documents/antigravity/spect-watson/recursos/AsymRotor.m), integrando además la restricción de **rotor plano ($C \approx \frac{AB}{A+B}$)** y el parámetro de asimetría de Ray ($\kappa$) para el **Trifenileno ($\text{C}_{18}\text{H}_{12}$)**.
-                    """
-                )
+                gr.Markdown("### 📐 Motor Exacto `AsymRotor` & Método de Rejilla Convergente (Multigrid Coarse-to-Fine)")
                 with gr.Row():
                     ar_preset = gr.Dropdown(
                         choices=list(ASYMROTOR_MLX_PRESETS.keys()),
@@ -2294,6 +2255,127 @@ def build_gradio_app():
                             headers=["Tipo", "Nivel Sup (J' Ka' Kc')", "Nivel Inf (J'' Ka'' Kc'')", "Freq Abs (MHz)", "Δν Rel (MHz)", "Intensidad Norm", "E_low (MHz)"],
                             label="Lista de Líneas Cuánticas Principales devueltas por `y, lines = asym_rotor(..., lines=True)`"
                         )
+
+            # =========================================================================
+            # TAB 5: MANUAL DE USUARIO Y GUÍA DE CONTROLES
+            # =========================================================================
+            with gr.TabItem("📖 5. Manual y Ayuda", id="tab_manual"):
+                gr.Markdown(
+                    r"""
+                    ## 📖 Manual de Usuario y Guía de Controles — MELIORA
+                    Esta guía proporciona la fundamentación física, la descripción detallada de los controles y los procedimientos recomendados para cada pestaña de la suite.
+
+                    ---
+
+                    ### 1. ⚡ Simulador Cuántico Directo (Pestaña 1)
+                    * **Constantes Rotacionales ($A, B, C$ en MHz):**  
+                      Inversamente proporcionales a los momentos principales de inercia ($I_a < I_b < I_c \implies A > B > C$). Se definen para el estado electrónico basal ($S_0$: $A'', B'', C''$) y excitado ($S_1$: $A', B', C'$).
+                    * **Reglas de Selección y Momentos Dipolares:**
+                      * **Tipo $a$ Puro ($\mu_a^2 = 1$, $\Delta K_a = \text{par}, \Delta K_c = \text{impar}$):** Momento dipolar paralelo al eje $a$ (eje longitudinal). Genera una rama $Q$ central muy intensa y compacta en $\nu_0$.
+                      * **Tipo $b$ Puro ($\mu_b^2 = 1$, $\Delta K_a = \text{impar}, \Delta K_c = \text{impar}$):** Momento dipolar paralelo al eje $b$ en el plano molecular (ej. Carbazol por simetría $C_{2v}$). Produce una depresión o hueco central característico en $\nu_0$ y sub-bandas laterales bien resueltas.
+                      * **Tipo $c$ Puro ($\mu_c^2 = 1$, $\Delta K_a = \text{impar}, \Delta K_c = \text{par}$):** Momento dipolar perpendicular al plano aromático (fuera del plano).
+                      * **Banda Híbrida:** Suma ponderada $\mu_a^2 I_a + \mu_b^2 I_b + \mu_c^2 I_c$ cuando la transición no coincide con un eje principal (ej. Trifenileno en $D_{3h}$ con $\mu_a^2 \approx 0.50, \mu_b^2 \approx 0.50$).
+                    * **Modelos Hamiltonianos:**
+                      * **Rotor Rígido Puro (Estándar JB95):** Desprecia la distorsión centrífuga ($\Delta_J = \Delta_{JK} = \Delta_K = \delta_J = \delta_K = 0$). Es el estándar para temperaturas de jet supersónico ($T_{\text{rot}} \le 4\text{ K}$) y $J \le 30$.
+                      * **Hamiltoniano de Watson (Reducción A):** Añade los 5 términos cuárticos de distorsión para corregir el estiramiento centrífugo a rotaciones elevadas.
+                    * **Modo Espejo JCP:** Grafica el espectro experimental en la parte superior ($+Y$) y la simulación cuántica invertida en la parte inferior ($-Y$).
+
+                    ---
+
+                    ### 2. 🎯 Estación de Trabajo JB95 & Evolución Diferencial (Pestaña 2)
+                    * **Proyección Vertical a Línea Base:** Detecta automáticamente los máximos experimentales de los datos crudos del espectrómetro mediante interpolación parabólica sub-grid y proyecta líneas verticales hacia la línea base ($y = 0$).
+                    * **Identificación de Picos y Traslapes:**
+                      * 🟢 **Aislado (×1):** El pico experimental contiene una única transición cuántica asignada.
+                      * 🟠 **Traslapado (×N):** Dos o más transiciones cuánticas convergen dentro del mismo ancho instrumental ($\text{FWHM}$), formando un multiplete.
+                      * 🔴 **Sin Asignar:** No existe transición calculada dentro de la tolerancia $\pm\text{tol}$.
+                    * **Navegación Interactiva por Ratón:**
+                      * **Clic Izquierdo + Arrastrar:** Recorre el espectro horizontalmente (frecuencias) y verticalmente (línea base).
+                      * **Rueda del Ratón:** Controla de forma inteligente la ganancia de amplitud vertical ($Y\text{-Gain}$) y el zoom horizontal ($X\text{-Zoom}$).
+                      * **Botón `[⚠️ Ir a Traslape ➔]`:** Salta secuencialmente entre los multipletes traslapados para inspección visual.
+                    * **Exportación .asc:** Genera un archivo con formato 100% compatible con JET/BEAM 95 (`Type J' Ka' Kc' J'' Ka'' Kc'' Int Freq_Exp Freq_Calc Residual`).
+
+                    ---
+
+                    ### 3. 🧪 Geometría 3D & Química Cuántica (Pestaña 3)
+                    * **Tensor de Inercia Isotópico:** Optimiza la geometría molecular 3D, calcula el centro de masas y diagonaliza la matriz de inercia para encontrar el Sistema de Ejes Principales (PAS: $a, b, c$).
+                    * **Parámetro de Asimetría de Ray ($\kappa$):**
+                      $$\kappa = \frac{2B - A - C}{A - C}$$
+                      Clasifica el rotor entre prolato ($\kappa = -1$, cigarro), asimétrico ($\kappa \approx 0$) y oblato ($\kappa = +1$, disco/moneda).
+                    * **Vector Momento Dipolar ($\vec{\mu}$):** Determina las proyecciones $(\mu_a, \mu_b, \mu_c)$ y predice los pesos de las sub-bandas Tipo $a, b, c$.
+
+                    ---
+
+                    ### 4. 📐 Motor AsymRotor & Rejilla Convergente (Pestaña 4)
+                    * **Motor AsymRotor (Dr. Mario Delgado-Jaime):** Reproduce el código de MATLAB `Simulacion_RotorRigido.mlx` y `AsymRotor.m`.
+                    * **Método de Rejilla Convergente (Multigrid Coarse-to-Fine):** Evalúa mallas bidimensionales jerárquicas contrayendo la ventana hacia el mínimo global. Utiliza una caché LRU de eigenvalores para evaluar 21 desplazamientos finos de calibración (`Shift`) por nodo sin re-diagonalizar matrices.
+                    * **Condición de Molécula Plana:** En una molécula plana rígida, $C = \frac{AB}{A+B}$.
+                    * **Acoplamiento de Coriolis en Simetría $D_{3h}$ (Trifenileno):** Si la transición es un falso origen Herzberg-Teller inducido por un modo degenerado $e'$, el momento angular vibracional $\ell = \pm 1$ genera un acople de Coriolis que absorbe una constante efectiva $C_{\text{eff}} = C_{\text{plano}}(1 + \zeta_{\text{eff}})$. Desactivar la restricción plana rígida es indispensable para resolver los sub-picos de $-90.4\text{ MHz}$.
+                    """
+                )
+
+            # =========================================================================
+            # TAB 6: ACERCA DE MELIORA Y CRÉDITOS INSTITUCIONALES
+            # =========================================================================
+            with gr.TabItem("ℹ️ 6. Acerca de MELIORA y Créditos", id="tab_about"):
+                gr.Markdown(
+                    r"""
+                    # 🔬 MELIORA (v2.0)
+                    ### **M**olecular **E**lectronic & **L**aser **I**nteractions with **O**ptimized **R**o-vibronic **A**nalysis
+                    **División de Ciencias e Ingenierías · Campus León · Universidad de Guanajuato**
+
+                    ---
+
+                    ### 👥 Equipo de Investigación y Créditos Académicos
+
+                    * **Desarrollador y Autor Principal:**  
+                      **Lic. Miguel Alejandro Díaz Gaytán**  
+                      *Licenciado en Química · Estudiante de Maestría en Ciencias Aplicadas*  
+                      *División de Ciencias e Ingenierías (Campus León), Universidad de Guanajuato*  
+                      *Línea de investigación: Espectroscopía molecular de alta resolución, algoritmos evolutivos (Evolución Diferencial), procesamiento digital de señales (DSP) y química cuántica computacional.*
+
+                    * **Dirección Científica y Asesoría Académica:**  
+                      * **Dr. Leonardo Álvarez-Valtierra**  
+                        *Profesor e Investigador Titular — DCI, Universidad de Guanajuato*  
+                        *Pionero en México en Espectroscopía de Rotación Pura y Rovibrónica de Alta Resolución con Haces Moleculares Supersónicos y Fluorescencia Inducida por Láser (LIF). Asesor principal y custodio de la metodología experimental JB95.*  
+                      * **Dr. Mario Ulises Delgado-Jaime**  
+                        *Profesor e Investigador Titular — DCI, Universidad de Guanajuato*  
+                        *Especialista en Espectroscopía Teórica, Estructura Electrónica y creador de los motores AsymRotor y BlueprintXAS (UBC / JSR 2010).*
+
+                    * **Agradecimientos Institucionales y Patrocinio:**  
+                      Se extiende un sincero y profundo agradecimiento al **Dr. Alejandro Gil-Villegas Montiel** por el respaldo académico continuo y el apoyo económico otorgado a través del programa de **Ayudantía de Investigador SNII Nivel III**, fundamental para el desarrollo y consolidación de la plataforma MELIORA y este proyecto de posgrado.
+
+                    ---
+
+                    ### 📄 Cómo Citar este Software (Citation Format)
+
+                    Si utilizas **MELIORA** en tu tesis, reporte técnico o artículo de investigación, por favor cita:
+
+                    **Formato Estándar (JCP / ACS):**  
+                    Díaz-Gaytán, M. A.; Álvarez-Valtierra, L.; Delgado-Jaime, M. U. *MELIORA: Molecular Electronic & Laser Interactions with Optimized Ro-vibronic Analysis (v2.0)*; División de Ciencias e Ingenierías, Universidad de Guanajuato, 2026. Disponible en: https://github.com/mgueldiaz10-oss/specwatson
+
+                    **Formato BibTeX:**
+                    ```bibtex
+                    @software{meliora2026,
+                      author       = {Díaz-Gaytán, Miguel Alejandro and Álvarez-Valtierra, Leonardo and Delgado-Jaime, Mario Ulises},
+                      title        = {MELIORA: Molecular Electronic & Laser Interactions with Optimized Ro-vibronic Analysis},
+                      year         = {2026},
+                      version      = {2.0},
+                      publisher    = {División de Ciencias e Ingenierías, Universidad de Guanajuato},
+                      url          = {https://github.com/mgueldiaz10-oss/specwatson}
+                    }
+                    ```
+
+                    ---
+
+                    ### 📚 Referencias Bibliográficas Fundamentales
+                    1. **Álvarez-Valtierra, L.; Pratt, D. W.** *High-resolution electronic spectroscopy of carbazole in the gas phase: A study of the ground and first excited singlet states.* J. Chem. Phys. **2006**, 125, 244309.
+                    2. **Delgado-Jaime, M. U.; Kennepohl, P.** *Development and exploration of a new methodology for the fitting and analysis of XAS data.* J. Synchrotron Rad. **2010**, 17, 119–128.
+                    3. **Delgado-Jaime, M. U.; Mewis, C. P.; Kennepohl, P.** *Blueprint XAS: a Matlab-based toolbox for the fitting and analysis of XAS spectra.* J. Synchrotron Rad. **2010**, 17, 132–137.
+                    4. **Watson, J. K. G.** *Determination of Centrifugal Distortion Constants of Asymmetric-Top Molecules.* J. Chem. Phys. **1967**, 46, 1935; **1968**, 48, 4517.
+                    5. **Herman, R.; Wallis, R. F.** *Influence of Vibration-Rotation Interaction on Line Intensities in Vibration-Rotation Bands of Diatomic Molecules.* J. Chem. Phys. **1955**, 23, 637.
+                    6. **Herzberg, G.** *Molecular Spectra and Molecular Structure. II. Infrared and Raman Spectra of Polyatomic Molecules.* Van Nostrand, 1945 / Krieger, 1989.
+                    """
+                )
 
 
         # Callbacks for Tab 1
@@ -2587,8 +2669,8 @@ def build_gradio_app():
         gr.Markdown(
             """
             ---
-            *SpecWatson es software científico desarrollado en la División de Ciencias e Ingenierías (DCI-UG, Campus León).*  
-            *Agradecimientos: Apoyo a través del programa de Ayudantía de Investigador SNII Nivel III del **Dr. Alejandro Gil-Villegas**.*
+            *MELIORA (v2.0) es software científico desarrollado en la División de Ciencias e Ingenierías (DCI-UG, Campus León).*  
+            *Autor: Lic. Miguel Alejandro Díaz Gaytán · Asesores: Dr. Leonardo Álvarez-Valtierra & Dr. Mario Ulises Delgado-Jaime · Apoyo SNII III Dr. Alejandro Gil-Villegas.*
             """
         )
 

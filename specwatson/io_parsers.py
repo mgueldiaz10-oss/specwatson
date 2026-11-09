@@ -493,7 +493,7 @@ def auto_assign_spectrometer_lines(
     de_origin_span_mhz: float = 60.0,
     planar_constraint: bool = False,
     fwhm_mhz: float = 45.0,
-    output_filename: str = "Asignacion_SpecWatson_JB95.asc"
+    output_filename: str = "Asignacion_MELIORA_JB95.asc"
 ) -> AutoAssignmentResult:
     """
     1. Scans all frequencies of `exp_dataset`, detects local peak maxima with parabolic sub-MHz interpolation,
@@ -1360,7 +1360,7 @@ def render_jb95_workstation_html(
   <!-- Title Bar -->
   <div class="jb95-titlebar">
     <div class="jb95-brand">
-      <span>🖥️ JET/BEAM 95 · SpecWatson Interactive Workstation</span>
+      <span>🖥️ JET/BEAM 95 · MELIORA Workstation</span>
       <span class="jb95-badge badge-single" id="lblSingle">🟢 Aislados: 0</span>
       <span class="jb95-badge badge-ovlp" id="lblOvlp">🟠 Traslapados: 0</span>
       <span class="jb95-badge badge-unass" id="lblUnass">🔴 Sin Asignar: 0</span>
