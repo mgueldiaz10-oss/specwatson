@@ -2328,8 +2328,8 @@ def build_gradio_app():
                     ### 👥 Equipo de Investigación y Créditos Académicos
 
                     * **Desarrollador y Autor Principal:**  
-                      **Lic. Miguel Alejandro Díaz Gaytán**  
-                      *Licenciado en Química · Estudiante de Maestría en Ciencias Aplicadas*  
+                      **Ing. Miguel Alejandro Díaz Gaytán**  
+                      *Ingeniero · Estudiante de Maestría en Ciencias Aplicadas*  
                       *División de Ciencias e Ingenierías (Campus León), Universidad de Guanajuato*  
                       *Línea de investigación: Espectroscopía molecular de alta resolución, algoritmos evolutivos (Evolución Diferencial), procesamiento digital de señales (DSP) y química cuántica computacional.*
 
@@ -2670,7 +2670,7 @@ def build_gradio_app():
             """
             ---
             *MELIORA (v2.0) es software científico desarrollado en la División de Ciencias e Ingenierías (DCI-UG, Campus León).*  
-            *Autor: Lic. Miguel Alejandro Díaz Gaytán · Asesores: Dr. Leonardo Álvarez-Valtierra & Dr. Mario Ulises Delgado-Jaime · Apoyo SNII III Dr. Alejandro Gil-Villegas.*
+            *Autor: Ing. Miguel Alejandro Díaz Gaytán · Asesores: Dr. Leonardo Álvarez-Valtierra & Dr. Mario Ulises Delgado-Jaime · Apoyo SNII III Dr. Alejandro Gil-Villegas.*
             """
         )
 
